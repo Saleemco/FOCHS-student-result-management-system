@@ -13,45 +13,30 @@ $teacher_classes = array_map('trim', explode(',', $_SESSION['teacher_classes']))
 $teacher_subjects = array_map('trim', explode(',', $_SESSION['teacher_subject']));
 $class_conditions = implode("','", $teacher_classes);
 
-// Subject to database column mapping
-$subject_columns = [
-    'Mathematics' => 'mathematics',
-    'English Studies' => 'english_studies',
-    'Basic Science' => 'basic_science',
-    'Basic Technology' => 'basic_technology',
-    'Social Studies' => 'social_studies',
-    'Civic Education' => 'civic_education',
-    'Computer Studies / ICT' => 'computer_studies',
-    'Physical & Health Education (PHE)' => 'physical_health_education',
-    'Agricultural Science' => 'agricultural_science',
-    'Yoruba' => 'yoruba',
-    'Arabic' => 'arabic',
-    'Islamic Religious Studies (IRS)' => 'islamic_studies',
-    'Cultural & Creative Arts (CCA)' => 'cultural_creative_arts',
-    'Home Economics' => 'home_economics',
-    'Business Studies' => 'business_studies'
-];
-
-// Get only the subjects this teacher teaches
-$teacher_subject_columns = [];
-foreach ($teacher_subjects as $subject) {
-    if (isset($subject_columns[$subject])) {
-        $teacher_subject_columns[$subject] = $subject_columns[$subject];
-    }
-}
-
 // Handle result deletion
 if (isset($_POST['delete_result'])) {
-    $result_id = $_POST['result_id'];
+    $subject_mark_id = $_POST['subject_mark_id'];
     
-    // Verify result belongs to teacher's class
-    $verify_sql = "SELECT class FROM results WHERE id = '$result_id' AND class IN ('$class_conditions')";
+    // Verify subject mark belongs to teacher's class
+    $verify_sql = "SELECT sm.id 
+                   FROM subject_marks sm 
+                   JOIN students s ON sm.student_id = s.id 
+                   WHERE sm.id = '$subject_mark_id' 
+                   AND s.class_name IN ('$class_conditions')";
     $verify_result = mysqli_query($conn, $verify_sql);
     
     if ($verify_result && mysqli_num_rows($verify_result) > 0) {
-        $delete_sql = "DELETE FROM results WHERE id = '$result_id'";
+        $delete_sql = "DELETE FROM subject_marks WHERE id = '$subject_mark_id'";
         if (mysqli_query($conn, $delete_sql)) {
             $success = "Result deleted successfully!";
+            
+            // Recalculate the student's total marks and percentage
+            $student_id_sql = "SELECT student_id FROM subject_marks WHERE id = '$subject_mark_id'";
+            $student_id_result = mysqli_query($conn, $student_id_sql);
+            if ($student_id_result && mysqli_num_rows($student_id_result) > 0) {
+                $student_data = mysqli_fetch_assoc($student_id_result);
+                recalculateStudentResults($conn, $student_data['student_id']);
+            }
         } else {
             $error = "Error deleting result: " . mysqli_error($conn);
         }
@@ -62,14 +47,20 @@ if (isset($_POST['delete_result'])) {
 
 // Handle filter
 $filter_class = isset($_GET['class']) ? mysqli_real_escape_string($conn, $_GET['class']) : '';
+$filter_subject = isset($_GET['subject']) ? mysqli_real_escape_string($conn, $_GET['subject']) : '';
 
-$where_conditions = ["class IN ('$class_conditions')"];
-if ($filter_class) $where_conditions[] = "class = '$filter_class'";
+$where_conditions = ["s.class_name IN ('$class_conditions')"];
+if ($filter_class) $where_conditions[] = "s.class_name = '$filter_class'";
+if ($filter_subject) $where_conditions[] = "sm.subject = '$filter_subject'";
 
 $where_clause = implode(' AND ', $where_conditions);
 
-// Get results data
-$results_sql = "SELECT * FROM results WHERE $where_clause ORDER BY class, name";
+// Get results data from subject_marks table
+$results_sql = "SELECT sm.*, s.name, s.roll_number, s.class_name 
+                FROM subject_marks sm 
+                JOIN students s ON sm.student_id = s.id 
+                WHERE $where_clause 
+                ORDER BY s.class_name, s.name, sm.subject";
 $results_result = mysqli_query($conn, $results_sql);
 
 // Check if query failed
@@ -81,35 +72,64 @@ if (!$results_result) {
     $total_results = mysqli_num_rows($results_result);
 }
 
-// Function to calculate percentage
-function calculatePercentage($marks) {
-    return round(($marks / 100) * 100, 2);
+// Function to recalculate student results
+function recalculateStudentResults($conn, $student_id) {
+    // Get all subject marks for this student
+    $marks_sql = "SELECT SUM(total_marks) as total_marks, COUNT(*) as subjects_count 
+                  FROM subject_marks 
+                  WHERE student_id = '$student_id'";
+    $marks_result = mysqli_query($conn, $marks_sql);
+    
+    if ($marks_result && mysqli_num_rows($marks_result) > 0) {
+        $marks_data = mysqli_fetch_assoc($marks_result);
+        $total_marks = $marks_data['total_marks'] ?? 0;
+        $subjects_count = $marks_data['subjects_count'] ?? 0;
+        
+        // Calculate percentage
+        $percentage = $subjects_count > 0 ? ($total_marks / ($subjects_count * 100)) * 100 : 0;
+        
+        // Get student details
+        $student_sql = "SELECT roll_number, class_name FROM students WHERE id = '$student_id'";
+        $student_result = mysqli_query($conn, $student_sql);
+        
+        if ($student_result && mysqli_num_rows($student_result) > 0) {
+            $student = mysqli_fetch_assoc($student_result);
+            
+            // Update the results table
+            $update_sql = "UPDATE results SET 
+                          marks = '$total_marks',
+                          percentage = '$percentage',
+                          updated_at = NOW()
+                          WHERE roll_number = '{$student['roll_number']}' AND class = '{$student['class_name']}'";
+            
+            mysqli_query($conn, $update_sql);
+        }
+    }
 }
 
 // Function to calculate grade
-function calculateGrade($percentage) {
-    if ($percentage >= 90) return ['A+', 'grade-A-plus'];
-    if ($percentage >= 80) return ['A', 'grade-A'];
-    if ($percentage >= 70) return ['B', 'grade-B'];
-    if ($percentage >= 60) return ['C', 'grade-C'];
-    if ($percentage >= 50) return ['D', 'grade-D'];
-    if ($percentage >= 40) return ['E', 'grade-E'];
+function calculateGrade($total_marks) {
+    if ($total_marks >= 90) return ['A+', 'grade-A-plus'];
+    if ($total_marks >= 80) return ['A', 'grade-A'];
+    if ($total_marks >= 70) return ['B', 'grade-B'];
+    if ($total_marks >= 60) return ['C', 'grade-C'];
+    if ($total_marks >= 50) return ['D', 'grade-D'];
+    if ($total_marks >= 40) return ['E', 'grade-E'];
     return ['F', 'grade-F'];
 }
 
 // Function to calculate student average
-function calculateStudentAverage($result, $teacher_subject_columns) {
-    $total_marks = 0;
-    $subject_count = 0;
+function calculateStudentAverage($student_id, $conn) {
+    $avg_sql = "SELECT AVG(total_marks) as average 
+                FROM subject_marks 
+                WHERE student_id = '$student_id'";
+    $avg_result = mysqli_query($conn, $avg_sql);
     
-    foreach ($teacher_subject_columns as $column) {
-        if (isset($result[$column]) && $result[$column] > 0) {
-            $total_marks += $result[$column];
-            $subject_count++;
-        }
+    if ($avg_result && mysqli_num_rows($avg_result) > 0) {
+        $avg_data = mysqli_fetch_assoc($avg_result);
+        return round($avg_data['average'], 2);
     }
-    
-    return $subject_count > 0 ? round($total_marks / $subject_count, 2) : 0;
+    return 0;
 }
 ?>
 
@@ -159,10 +179,15 @@ function calculateStudentAverage($result, $teacher_subject_columns) {
         .subject-row:hover {
             background-color: #f1f5f9;
         }
+        
+        .marks-breakdown {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
     </style>
 </head>
 <body class="flex">
-    <!-- Sidebar (Keep your existing sidebar code) -->
+    <!-- Sidebar -->
     <div class="sidebar w-64 min-h-screen p-6">
         <div class="flex items-center justify-between mb-8">
             <div class="flex items-center space-x-3">
@@ -206,12 +231,42 @@ function calculateStudentAverage($result, $teacher_subject_columns) {
         <div class="flex justify-between items-center mb-8">
             <div>
                 <h1 class="text-3xl font-bold text-white">Student Results Dashboard</h1>
-                <p class="text-white/80">Manage and view student results by subject</p>
+                <p class="text-white/80">Manage and view student results with CA and Exam breakdown</p>
             </div>
             <a href="teacher_add_results.php" class="bg-white text-green-600 px-6 py-3 rounded-lg font-semibold hover:bg-green-50 transition-all duration-300 shadow-lg hover:shadow-xl flex items-center space-x-2">
                 <i class="fas fa-plus"></i>
                 <span>Add New Result</span>
             </a>
+        </div>
+
+        <!-- Marks Breakdown Info -->
+        <div class="marks-breakdown rounded-xl p-6 mb-6">
+            <h3 class="text-xl font-bold mb-3 flex items-center">
+                <i class="fas fa-info-circle mr-3"></i>
+                Marks Breakdown System
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="text-center p-4 bg-white/20 rounded-lg">
+                    <div class="text-2xl font-bold">40</div>
+                    <div class="text-sm">CA Marks</div>
+                    <div class="text-xs opacity-80">(0-40 marks)</div>
+                </div>
+                <div class="text-center p-4 bg-white/20 rounded-lg">
+                    <div class="text-2xl font-bold">60</div>
+                    <div class="text-sm">Exam Marks</div>
+                    <div class="text-xs opacity-80">(0-60 marks)</div>
+                </div>
+                <div class="text-center p-4 bg-white/20 rounded-lg">
+                    <div class="text-2xl font-bold">100</div>
+                    <div class="text-sm">Total Score</div>
+                    <div class="text-xs opacity-80">(0-100 marks)</div>
+                </div>
+                <div class="text-center p-4 bg-white/20 rounded-lg">
+                    <div class="text-2xl font-bold">A+</div>
+                    <div class="text-sm">Grading</div>
+                    <div class="text-xs opacity-80">(90-100 marks)</div>
+                </div>
+            </div>
         </div>
 
         <!-- Filter Section -->
@@ -220,14 +275,25 @@ function calculateStudentAverage($result, $teacher_subject_columns) {
                 <i class="fas fa-filter text-green-500 mr-3"></i>
                 Filter Results
             </h3>
-            <form method="GET" class="flex flex-col md:flex-row gap-4 items-end">
-                <div class="flex-1">
+            <form method="GET" class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                <div>
                     <label class="block text-sm font-medium text-gray-700 mb-2">Class</label>
                     <select name="class" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500">
                         <option value="">All Classes</option>
                         <?php foreach ($teacher_classes as $class): ?>
                             <option value="<?php echo $class; ?>" <?php echo $filter_class == $class ? 'selected' : ''; ?>>
                                 <?php echo $class; ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Subject</label>
+                    <select name="subject" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500">
+                        <option value="">All Subjects</option>
+                        <?php foreach ($teacher_subjects as $subject): ?>
+                            <option value="<?php echo $subject; ?>" <?php echo $filter_subject == $subject ? 'selected' : ''; ?>>
+                                <?php echo $subject; ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
@@ -253,7 +319,7 @@ function calculateStudentAverage($result, $teacher_subject_columns) {
                     Results in Your Classes
                 </h3>
                 <span class="bg-green-100 text-green-600 px-3 py-1 rounded-full text-sm font-medium">
-                    <?php echo $total_results . ' Student' . ($total_results != 1 ? 's' : ''); ?>
+                    <?php echo $total_results . ' Result' . ($total_results != 1 ? 's' : ''); ?>
                 </span>
             </div>
 
@@ -270,88 +336,82 @@ function calculateStudentAverage($result, $teacher_subject_columns) {
             <?php endif; ?>
 
             <?php if ($results_result && mysqli_num_rows($results_result) > 0): ?>
-                <div class="space-y-6">
-                    <?php while ($student = mysqli_fetch_assoc($results_result)): 
-                        $average = calculateStudentAverage($student, $teacher_subject_columns);
-                        list($avg_grade, $avg_grade_class) = calculateGrade($average);
-                    ?>
-                    <div class="border border-gray-200 rounded-lg overflow-hidden">
-                        <!-- Student Header -->
-                        <div class="student-header px-6 py-4">
-                            <div class="flex flex-col md:flex-row md:items-center md:justify-between">
-                                <div class="flex items-center space-x-4">
-                                    <div class="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center">
-                                        <i class="fas fa-user text-white"></i>
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead>
+                            <tr class="bg-gray-50 border-b">
+                                <th class="px-6 py-4 text-left text-sm font-semibold text-gray-600">Student</th>
+                                <th class="px-6 py-4 text-left text-sm font-semibold text-gray-600">Class</th>
+                                <th class="px-6 py-4 text-left text-sm font-semibold text-gray-600">Subject</th>
+                                <th class="px-6 py-4 text-left text-sm font-semibold text-gray-600">CA Marks</th>
+                                <th class="px-6 py-4 text-left text-sm font-semibold text-gray-600">Exam Marks</th>
+                                <th class="px-6 py-4 text-left text-sm font-semibold text-gray-600">Total</th>
+                                <th class="px-6 py-4 text-left text-sm font-semibold text-gray-600">Grade</th>
+                                <th class="px-6 py-4 text-left text-sm font-semibold text-gray-600">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php while ($result = mysqli_fetch_assoc($results_result)): 
+                                list($grade, $grade_class) = calculateGrade($result['total_marks']);
+                            ?>
+                            <tr class="subject-row border-b border-gray-100">
+                                <td class="px-6 py-4">
+                                    <div class="flex items-center">
+                                        <div class="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center mr-3">
+                                            <i class="fas fa-user text-green-600"></i>
+                                        </div>
+                                        <div>
+                                            <div class="text-gray-800 font-medium"><?php echo $result['name']; ?></div>
+                                            <div class="text-gray-500 text-sm">Roll: <?php echo $result['roll_number']; ?></div>
+                                        </div>
                                     </div>
-                                    <div>
-                                        <h4 class="text-lg font-semibold text-white"><?php echo $student['name']; ?></h4>
-                                        <p class="text-white/80 text-sm">Roll Number: <?php echo $student['roll_number']; ?> | Class: <?php echo $student['class']; ?></p>
+                                </td>
+                                <td class="px-6 py-4">
+                                    <span class="bg-blue-100 text-blue-600 px-2 py-1 rounded text-xs font-medium">
+                                        <?php echo $result['class_name']; ?>
+                                    </span>
+                                </td>
+                                <td class="px-6 py-4">
+                                    <div class="flex items-center">
+                                        <i class="fas fa-book text-green-500 mr-2"></i>
+                                        <span class="text-gray-700 font-medium"><?php echo $result['subject']; ?></span>
                                     </div>
-                                </div>
-                                <div class="mt-2 md:mt-0 text-right">
-                                    <div class="text-white/80 text-sm">Overall Average</div>
-                                    <div class="text-xl font-bold text-white"><?php echo $average; ?>%</div>
-                                    <span class="text-white/90 text-sm">Grade: <?php echo $avg_grade; ?></span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Subjects Table -->
-                        <div class="overflow-x-auto">
-                            <table class="w-full">
-                                <thead>
-                                    <tr class="bg-gray-50 border-b">
-                                        <th class="px-6 py-3 text-left text-sm font-semibold text-gray-600">Subject</th>
-                                        <th class="px-6 py-3 text-left text-sm font-semibold text-gray-600">Marks</th>
-                                        <th class="px-6 py-3 text-left text-sm font-semibold text-gray-600">Percentage</th>
-                                        <th class="px-6 py-3 text-left text-sm font-semibold text-gray-600">Grade</th>
-                                        <th class="px-6 py-3 text-left text-sm font-semibold text-gray-600">Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ($teacher_subject_columns as $subject_name => $column): 
-                                        $marks = isset($student[$column]) ? (int)$student[$column] : 0;
-                                        $percentage = calculatePercentage($marks);
-                                        list($grade, $grade_class) = calculateGrade($percentage);
-                                        
-                                        if ($marks > 0): // Only show subjects with marks
-                                    ?>
-                                    <tr class="subject-row border-b border-gray-100">
-                                        <td class="px-6 py-4">
-                                            <div class="flex items-center">
-                                                <i class="fas fa-book text-green-500 mr-3"></i>
-                                                <span class="text-gray-800 font-medium"><?php echo $subject_name; ?></span>
-                                            </div>
-                                        </td>
-                                        <td class="px-6 py-4">
-                                            <span class="text-gray-600 font-semibold"><?php echo $marks; ?>/100</span>
-                                        </td>
-                                        <td class="px-6 py-4">
-                                            <span class="text-blue-600 font-semibold"><?php echo $percentage; ?>%</span>
-                                        </td>
-                                        <td class="px-6 py-4">
-                                            <span class="<?php echo $grade_class; ?> px-3 py-1 rounded-full text-xs font-semibold">
-                                                <?php echo $grade; ?>
-                                            </span>
-                                        </td>
-                                        <td class="px-6 py-4">
-                                            <form action="" method="post" class="inline">
-                                                <input type="hidden" name="result_id" value="<?php echo $student['id']; ?>">
-                                                <button type="submit" name="delete_result" 
-                                                        onclick="return confirm('Are you sure you want to delete <?php echo $subject_name; ?> result for <?php echo $student['name']; ?>?');"
-                                                        class="bg-red-500 text-white px-3 py-1 rounded-lg hover:bg-red-600 transition duration-200 flex items-center space-x-1 text-sm">
-                                                    <i class="fas fa-trash"></i>
-                                                    <span>Delete</span>
-                                                </button>
-                                            </form>
-                                        </td>
-                                    </tr>
-                                    <?php endif; endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                    <?php endwhile; ?>
+                                </td>
+                                <td class="px-6 py-4">
+                                    <span class="bg-blue-100 text-blue-600 px-2 py-1 rounded-full text-xs font-semibold">
+                                        <?php echo $result['ca_marks']; ?>/40
+                                    </span>
+                                </td>
+                                <td class="px-6 py-4">
+                                    <span class="bg-red-100 text-red-600 px-2 py-1 rounded-full text-xs font-semibold">
+                                        <?php echo $result['exam_marks']; ?>/60
+                                    </span>
+                                </td>
+                                <td class="px-6 py-4">
+                                    <span class="bg-purple-100 text-purple-600 px-2 py-1 rounded-full text-xs font-semibold">
+                                        <?php echo $result['total_marks']; ?>/100
+                                    </span>
+                                </td>
+                                <td class="px-6 py-4">
+                                    <span class="<?php echo $grade_class; ?> px-3 py-1 rounded-full text-xs font-semibold">
+                                        <?php echo $grade; ?>
+                                    </span>
+                                </td>
+                                <td class="px-6 py-4">
+                                    <form action="" method="post" class="inline">
+                                        <input type="hidden" name="subject_mark_id" value="<?php echo $result['id']; ?>">
+                                        <button type="submit" name="delete_result" 
+                                                onclick="return confirm('Are you sure you want to delete <?php echo $result['subject']; ?> result for <?php echo $result['name']; ?>?');"
+                                                class="bg-red-500 text-white px-3 py-1 rounded-lg hover:bg-red-600 transition duration-200 flex items-center space-x-1 text-sm">
+                                            <i class="fas fa-trash"></i>
+                                            <span>Delete</span>
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                            <?php endwhile; ?>
+                        </tbody>
+                    </table>
                 </div>
             <?php else: ?>
                 <div class="text-center py-12">
@@ -360,7 +420,7 @@ function calculateStudentAverage($result, $teacher_subject_columns) {
                     </div>
                     <h3 class="text-xl font-semibold text-gray-600 mb-2">No Results Found</h3>
                     <p class="text-gray-500 mb-6">
-                        <?php echo $filter_class ? 'No results match your filter criteria.' : 'Get started by adding your first result.'; ?>
+                        <?php echo ($filter_class || $filter_subject) ? 'No results match your filter criteria.' : 'Get started by adding your first result.'; ?>
                     </p>
                     <a href="teacher_add_results.php" class="bg-green-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-green-700 transition-all duration-300 inline-flex items-center space-x-2">
                         <i class="fas fa-plus"></i>

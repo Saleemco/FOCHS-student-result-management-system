@@ -16,25 +16,6 @@ $teacher_classes = array_map('trim', explode(',', $_SESSION['teacher_classes']))
 $teacher_subjects = array_map('trim', explode(',', $_SESSION['teacher_subject']));
 $class_conditions = implode("','", $teacher_classes);
 
-// Subject to database column mapping
-$subject_columns = [
-    'Mathematics' => 'mathematics',
-    'English Studies' => 'english_studies',
-    'Basic Science' => 'basic_science',
-    'Basic Technology' => 'basic_technology',
-    'Social Studies' => 'social_studies',
-    'Civic Education' => 'civic_education',
-    'Computer Studies / ICT' => 'computer_studies',
-    'Physical & Health Education (PHE)' => 'physical_health_education',
-    'Agricultural Science' => 'agricultural_science',
-    'Yoruba' => 'yoruba',
-    'Arabic' => 'arabic',
-    'Islamic Religious Studies (IRS)' => 'islamic_studies',
-    'Cultural & Creative Arts (CCA)' => 'cultural_creative_arts',
-    'Home Economics' => 'home_economics',
-    'Business Studies' => 'business_studies'
-];
-
 // Get students from teacher's classes for dropdown
 $students_sql = "SELECT id, name, roll_number, class_name FROM students WHERE class_name IN ('$class_conditions') ORDER BY class_name, name";
 $students_result = mysqli_query($conn, $students_sql);
@@ -47,14 +28,19 @@ if ($students_result === false) {
 if (isset($_POST['add_result'])) {
     $student_id = mysqli_real_escape_string($conn, $_POST['student_id']);
     $subject = mysqli_real_escape_string($conn, $_POST['subject']);
-    $marks = mysqli_real_escape_string($conn, $_POST['marks']);
+    $ca_marks = mysqli_real_escape_string($conn, $_POST['ca_marks']);
+    $exam_marks = mysqli_real_escape_string($conn, $_POST['exam_marks']);
     
     // Validate marks
-    if ($marks < 0 || $marks > 100) {
-        $error = "Marks must be between 0 and 100.";
+    if ($ca_marks < 0 || $ca_marks > 40) {
+        $error = "CA marks must be between 0 and 40.";
+    } elseif ($exam_marks < 0 || $exam_marks > 60) {
+        $error = "Exam marks must be between 0 and 60.";
     } else {
+        $total_marks = $ca_marks + $exam_marks;
+        
         // Get student details and verify they belong to teacher's class
-        $student_sql = "SELECT name, roll_number, class_name FROM students WHERE id = '$student_id' AND class_name IN ('$class_conditions')";
+        $student_sql = "SELECT id, name, roll_number, class_name FROM students WHERE id = '$student_id' AND class_name IN ('$class_conditions')";
         $student_result = mysqli_query($conn, $student_sql);
         
         // Check if student query was successful
@@ -69,117 +55,92 @@ if (isset($_POST['add_result'])) {
             $student_name = $student_data['name'];
             $roll_number = $student_data['roll_number'];
             $class_name = $student_data['class_name'];
+            $student_db_id = $student_data['id'];
             
-            // Check if result already exists for this student
-            $check_sql = "SELECT id, mathematics, english_studies, basic_science, basic_technology, social_studies, civic_education, computer_studies, physical_health_education, agricultural_science, yoruba, arabic, islamic_studies, cultural_creative_arts, home_economics, business_studies, marks, percentage, teacher_id, teacher_name FROM results WHERE roll_number = '$roll_number' AND class = '$class_name'";
+            // Check if result already exists for this student in the main results table
+            $check_sql = "SELECT id FROM results WHERE roll_number = '$roll_number' AND class = '$class_name'";
             $check_result = mysqli_query($conn, $check_sql);
             
-            // Check if query was successful
             if ($check_result === false) {
                 $error = "Database error: " . mysqli_error($conn);
-            } elseif (mysqli_num_rows($check_result) > 0) {
-                // Student result exists, update the specific subject
-                $existing_result = mysqli_fetch_assoc($check_result);
-                $result_id = $existing_result['id'];
-                
-                if (isset($subject_columns[$subject])) {
-                    $column_name = $subject_columns[$subject];
-                    
-                    // Get current values to calculate new total
-                    $current_total = $existing_result['marks'];
-                    $current_subject_mark = $existing_result[$column_name];
-                    
-                    // Calculate new total (subtract old subject mark, add new one)
-                    $new_total = $current_total - $current_subject_mark + $marks;
-                    
-                    // Count total subjects with marks to calculate percentage
-                    $total_subjects_with_marks = 0;
-                    $total_marks_obtained = 0;
-                    
-                    foreach ($subject_columns as $subject_name => $db_column) {
-                        $mark = $existing_result[$db_column];
-                        if ($db_column == $column_name) {
-                            $mark = $marks; // Use the new mark for the updated subject
-                        }
-                        if ($mark > 0) {
-                            $total_subjects_with_marks++;
-                            $total_marks_obtained += $mark;
-                        }
-                    }
-                    
-                    // Calculate percentage based on actual subjects with marks
-                    $new_percentage = $total_subjects_with_marks > 0 ? ($total_marks_obtained / ($total_subjects_with_marks * 100)) * 100 : 0;
-                    
-                    // Update teacher info (append if multiple teachers)
-                    $current_teacher_id = $existing_result['teacher_id'] ?? '';
-                    $current_teacher_name = $existing_result['teacher_name'] ?? '';
-                    
-                    $new_teacher_id = $_SESSION['teacher_id'];
-                    $new_teacher_name = mysqli_real_escape_string($conn, $_SESSION['teacher_name']);
-                    
-                    // If different teacher and not already recorded, append to existing
-                    if (!empty($current_teacher_id) && $current_teacher_id != $new_teacher_id && strpos($current_teacher_id, (string)$new_teacher_id) === false) {
-                        $updated_teacher_id = $current_teacher_id . ',' . $new_teacher_id;
-                        $updated_teacher_name = $current_teacher_name . ', ' . $new_teacher_name;
-                    } else {
-                        $updated_teacher_id = $current_teacher_id ?: $new_teacher_id;
-                        $updated_teacher_name = $current_teacher_name ?: $new_teacher_name;
-                    }
-                    
-                    // Update the specific subject marks and recalculate total/percentage
-                    $update_sql = "UPDATE results SET 
-                                  $column_name = '$marks', 
-                                  marks = '$new_total', 
-                                  percentage = '$new_percentage',
-                                  teacher_id = '$updated_teacher_id',
-                                  teacher_name = '$updated_teacher_name',
-                                  updated_at = NOW()
-                                  WHERE id = '$result_id'";
-                    
-                    if (mysqli_query($conn, $update_sql)) {
-                        $success = "Result updated successfully for $student_name in $subject!";
-                        $_POST['marks'] = '';
-                    } else {
-                        $error = "Error updating result: " . mysqli_error($conn);
-                    }
-                } else {
-                    $error = "Invalid subject selected.";
-                }
             } else {
-                // No existing result, insert new record with only this subject
-                // Initialize all subjects to 0
-                $insert_data = [];
-                $total_marks = $marks;
+                $result_id = null;
                 
-                // Set default values for all subjects
-                foreach ($subject_columns as $subject_name => $column) {
-                    $insert_data[$column] = 0;
-                }
-                
-                // Set the marks for the specific subject
-                if (isset($subject_columns[$subject])) {
-                    $insert_data[$subject_columns[$subject]] = $marks;
-                }
-                
-                // Calculate percentage (only this subject for now)
-                $percentage = ($marks / 100) * 100;
-                
-                // Build the insert query
-                $columns = implode(', ', array_keys($insert_data));
-                $values = implode(', ', array_values($insert_data));
-                
-                $sql = "INSERT INTO results (name, roll_number, class, $columns, marks, percentage, teacher_id, teacher_name, created_at) 
-                        VALUES ('$student_name', '$roll_number', '$class_name', $values, '$total_marks', '$percentage', '".$_SESSION['teacher_id']."', '".mysqli_real_escape_string($conn, $_SESSION['teacher_name'])."', NOW())";
-                
-                if (mysqli_query($conn, $sql)) {
-                    $success = "Result added successfully for $student_name in $subject!";
-                    // Clear form
-                    $_POST['marks'] = '';
+                if (mysqli_num_rows($check_result) > 0) {
+                    // Student result exists in main table
+                    $existing_result = mysqli_fetch_assoc($check_result);
+                    $result_id = $existing_result['id'];
                 } else {
-                    $error = "Error adding result: " . mysqli_error($conn);
+                    // Create new entry in main results table
+                    $insert_sql = "INSERT INTO results (name, roll_number, class, marks, percentage, teacher_id, teacher_name, created_at) 
+                                  VALUES ('$student_name', '$roll_number', '$class_name', '0', '0', '".$_SESSION['teacher_id']."', '".mysqli_real_escape_string($conn, $_SESSION['teacher_name'])."', NOW())";
+                    
+                    if (mysqli_query($conn, $insert_sql)) {
+                        $result_id = mysqli_insert_id($conn);
+                    } else {
+                        $error = "Error creating result entry: " . mysqli_error($conn);
+                    }
+                }
+                
+                if ($result_id && !$error) {
+                    // Check if subject marks already exist for this student and subject
+                    $check_marks_sql = "SELECT id FROM subject_marks WHERE student_id = '$student_db_id' AND subject = '$subject'";
+                    $check_marks_result = mysqli_query($conn, $check_marks_sql);
+                    
+                    if (mysqli_num_rows($check_marks_result) > 0) {
+                        // Update existing subject marks
+                        $update_marks_sql = "UPDATE subject_marks SET 
+                                           ca_marks = '$ca_marks',
+                                           exam_marks = '$exam_marks',
+                                           total_marks = '$total_marks',
+                                           updated_at = NOW()
+                                           WHERE student_id = '$student_db_id' AND subject = '$subject'";
+                    } else {
+                        // Insert new subject marks
+                        $update_marks_sql = "INSERT INTO subject_marks (result_id, student_id, subject, ca_marks, exam_marks, total_marks) 
+                                           VALUES ('$result_id', '$student_db_id', '$subject', '$ca_marks', '$exam_marks', '$total_marks')";
+                    }
+                    
+                    if (mysqli_query($conn, $update_marks_sql)) {
+                        // Recalculate total marks and percentage
+                        recalculateStudentResults($conn, $student_db_id, $roll_number, $class_name);
+                        
+                        $success = "Result " . (mysqli_num_rows($check_marks_result) > 0 ? "updated" : "added") . " successfully for $student_name in $subject! (CA: $ca_marks/40, Exam: $exam_marks/60, Total: $total_marks/100)";
+                        $_POST['ca_marks'] = '';
+                        $_POST['exam_marks'] = '';
+                    } else {
+                        $error = "Error " . (mysqli_num_rows($check_marks_result) > 0 ? "updating" : "adding") . " subject marks: " . mysqli_error($conn);
+                    }
                 }
             }
         }
+    }
+}
+
+// Function to recalculate total marks and percentage
+function recalculateStudentResults($conn, $student_id, $roll_number, $class_name) {
+    // Get all subject marks for this student
+    $marks_sql = "SELECT SUM(total_marks) as total_marks, COUNT(*) as subjects_count 
+                  FROM subject_marks 
+                  WHERE student_id = '$student_id'";
+    $marks_result = mysqli_query($conn, $marks_sql);
+    
+    if ($marks_result && mysqli_num_rows($marks_result) > 0) {
+        $marks_data = mysqli_fetch_assoc($marks_result);
+        $total_marks = $marks_data['total_marks'] ?? 0;
+        $subjects_count = $marks_data['subjects_count'] ?? 0;
+        
+        // Calculate percentage
+        $percentage = $subjects_count > 0 ? ($total_marks / ($subjects_count * 100)) * 100 : 0;
+        
+        // Update the results table
+        $update_sql = "UPDATE results SET 
+                      marks = '$total_marks',
+                      percentage = '$percentage',
+                      updated_at = NOW()
+                      WHERE roll_number = '$roll_number' AND class = '$class_name'";
+        
+        mysqli_query($conn, $update_sql);
     }
 }
 
@@ -245,6 +206,10 @@ function calculateGrade($marks) {
         .grade-D { background-color: #F59E0B; color: white; }
         .grade-E { background-color: #EF4444; color: white; }
         .grade-F { background-color: #DC2626; color: white; }
+        .marks-summary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
     </style>
 </head>
 <body class="flex">
@@ -313,12 +278,37 @@ function calculateGrade($marks) {
         <div class="flex justify-between items-center mb-8">
             <div>
                 <h1 class="text-3xl font-bold text-white">Add Results</h1>
-                <p class="text-white/80">Add results for students in your classes</p>
+                <p class="text-white/80">Add CA and Exam marks for students in your classes</p>
             </div>
             <a href="teacher_dashboard.php" class="bg-white/20 text-white px-4 py-3 rounded-lg font-semibold hover:bg-white/30 transition-all duration-300 backdrop-blur-sm flex items-center space-x-2">
                 <i class="fas fa-arrow-left"></i>
                 <span>Back to Dashboard</span>
             </a>
+        </div>
+
+        <!-- Marks Breakdown Info -->
+        <div class="marks-summary rounded-xl p-6 mb-6">
+            <h3 class="text-xl font-bold mb-3 flex items-center">
+                <i class="fas fa-info-circle mr-3"></i>
+                Marks Breakdown
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="text-center p-4 bg-white/20 rounded-lg">
+                    <div class="text-2xl font-bold">40%</div>
+                    <div class="text-sm">Continuous Assessment</div>
+                    <div class="text-xs opacity-80">(0-40 marks)</div>
+                </div>
+                <div class="text-center p-4 bg-white/20 rounded-lg">
+                    <div class="text-2xl font-bold">60%</div>
+                    <div class="text-sm">Examination</div>
+                    <div class="text-xs opacity-80">(0-60 marks)</div>
+                </div>
+                <div class="text-center p-4 bg-white/20 rounded-lg">
+                    <div class="text-2xl font-bold">100%</div>
+                    <div class="text-sm">Total Score</div>
+                    <div class="text-xs opacity-80">(0-100 marks)</div>
+                </div>
+            </div>
         </div>
 
         <!-- Add Result Form -->
@@ -372,16 +362,37 @@ function calculateGrade($marks) {
                     </select>
                 </div>
 
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">
-                        <i class="fas fa-percentage text-green-500 mr-2"></i>
-                        Marks (0-100)
-                    </label>
-                    <input type="number" name="marks" required min="0" max="100" step="0.01"
-                           value="<?php echo isset($_POST['marks']) ? htmlspecialchars($_POST['marks']) : ''; ?>"
-                           class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition duration-200"
-                           placeholder="Enter marks">
-                    <div id="grade-display" class="mt-2 p-3 rounded-lg text-center font-semibold hidden"></div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">
+                            <i class="fas fa-edit text-blue-500 mr-2"></i>
+                            CA Marks (0-40)
+                        </label>
+                        <input type="number" name="ca_marks" required min="0" max="40" step="0.5"
+                               value="<?php echo isset($_POST['ca_marks']) ? htmlspecialchars($_POST['ca_marks']) : ''; ?>"
+                               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition duration-200"
+                               placeholder="CA marks">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">
+                            <i class="fas fa-file-alt text-red-500 mr-2"></i>
+                            Exam Marks (0-60)
+                        </label>
+                        <input type="number" name="exam_marks" required min="0" max="60" step="0.5"
+                               value="<?php echo isset($_POST['exam_marks']) ? htmlspecialchars($_POST['exam_marks']) : ''; ?>"
+                               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 transition duration-200"
+                               placeholder="Exam marks">
+                    </div>
+                </div>
+
+                <!-- Total Marks Display -->
+                <div id="total-display" class="p-4 bg-gray-50 rounded-lg border border-gray-200 hidden">
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="text-gray-700 font-medium">Total Marks:</span>
+                        <span id="total-marks" class="text-2xl font-bold text-green-600">0</span>
+                    </div>
+                    <div id="grade-display" class="text-center font-semibold"></div>
                 </div>
 
                 <button type="submit" name="add_result"
@@ -436,35 +447,44 @@ function calculateGrade($marks) {
             }
         });
 
-        // Auto-calculate grade when marks are entered
-        document.querySelector('input[name="marks"]').addEventListener('input', function() {
-            const marks = parseFloat(this.value);
+        // Calculate total marks and grade when CA or Exam marks are entered
+        function calculateTotalAndGrade() {
+            const caMarks = parseFloat(document.querySelector('input[name="ca_marks"]').value) || 0;
+            const examMarks = parseFloat(document.querySelector('input[name="exam_marks"]').value) || 0;
+            const totalMarks = caMarks + examMarks;
+            const totalDisplay = document.getElementById('total-display');
+            const totalMarksSpan = document.getElementById('total-marks');
             const gradeDisplay = document.getElementById('grade-display');
-            
-            if (!isNaN(marks) && marks >= 0 && marks <= 100) {
+
+            if (caMarks > 0 || examMarks > 0) {
+                totalMarksSpan.textContent = totalMarks + '/100';
+                
                 let grade = '';
                 let gradeClass = '';
                 
-                if (marks >= 90) { grade = 'A+'; gradeClass = 'grade-A-plus'; }
-                else if (marks >= 80) { grade = 'A'; gradeClass = 'grade-A'; }
-                else if (marks >= 70) { grade = 'B'; gradeClass = 'grade-B'; }
-                else if (marks >= 60) { grade = 'C'; gradeClass = 'grade-C'; }
-                else if (marks >= 50) { grade = 'D'; gradeClass = 'grade-D'; }
-                else if (marks >= 40) { grade = 'E'; gradeClass = 'grade-E'; }
+                if (totalMarks >= 90) { grade = 'A+'; gradeClass = 'grade-A-plus'; }
+                else if (totalMarks >= 80) { grade = 'A'; gradeClass = 'grade-A'; }
+                else if (totalMarks >= 70) { grade = 'B'; gradeClass = 'grade-B'; }
+                else if (totalMarks >= 60) { grade = 'C'; gradeClass = 'grade-C'; }
+                else if (totalMarks >= 50) { grade = 'D'; gradeClass = 'grade-D'; }
+                else if (totalMarks >= 40) { grade = 'E'; gradeClass = 'grade-E'; }
                 else { grade = 'F'; gradeClass = 'grade-F'; }
                 
-                gradeDisplay.textContent = 'Grade: ' + grade;
-                gradeDisplay.className = 'mt-2 p-3 rounded-lg text-center font-semibold ' + gradeClass;
-                gradeDisplay.classList.remove('hidden');
+                gradeDisplay.innerHTML = `Grade: <span class="${gradeClass} px-3 py-1 rounded-full">${grade}</span>`;
+                totalDisplay.classList.remove('hidden');
             } else {
-                gradeDisplay.classList.add('hidden');
+                totalDisplay.classList.add('hidden');
             }
-        });
+        }
+
+        // Add event listeners to both marks inputs
+        document.querySelector('input[name="ca_marks"]').addEventListener('input', calculateTotalAndGrade);
+        document.querySelector('input[name="exam_marks"]').addEventListener('input', calculateTotalAndGrade);
 
         // Show selected values after form submission
         document.addEventListener('DOMContentLoaded', function() {
-            <?php if (isset($_POST['student_id']) || isset($_POST['subject']) || isset($_POST['marks'])): ?>
-                // Form was submitted, values are already set via PHP
+            <?php if (isset($_POST['student_id']) || isset($_POST['subject']) || isset($_POST['ca_marks']) || isset($_POST['exam_marks'])): ?>
+                calculateTotalAndGrade();
             <?php endif; ?>
         });
     </script>

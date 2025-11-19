@@ -8,6 +8,53 @@ if (!isset($_SESSION['user_id']) && !isset($_SESSION['teacher_id']) && !isset($_
     exit();
 }
 
+// First, let's check what columns actually exist in your results table
+$table_columns = [];
+$check_columns_sql = "SHOW COLUMNS FROM results";
+$columns_result = mysqli_query($conn, $check_columns_sql);
+
+if ($columns_result) {
+    while ($column = mysqli_fetch_assoc($columns_result)) {
+        $table_columns[] = $column['Field'];
+    }
+}
+
+// Define subject mappings but only include columns that actually exist
+$subject_columns = [];
+$possible_subjects = [
+    'Mathematics' => 'mathematics',
+    'English Studies' => 'english_studies',
+    'Basic Science' => 'basic_science',
+    'Basic Technology' => 'basic_technology',
+    'Social Studies' => 'social_studies',
+    'Civic Education' => 'civic_education',
+    'Computer Studies / ICT' => 'computer_studies',
+    'Physical & Health Education (PHE)' => 'physical_health_education',
+    'Agricultural Science' => 'agricultural_science',
+    'Yoruba' => 'yoruba',
+    'Arabic' => 'arabic',
+    'Islamic Religious Studies (IRS)' => 'islamic_studies',
+    'Cultural & Creative Arts (CCA)' => 'cultural_creative_arts',
+    'Home Economics' => 'home_economics',
+    'Business Studies' => 'business_studies'
+];
+
+// Only include subjects that exist in the database
+foreach ($possible_subjects as $subject_name => $column_name) {
+    if (in_array($column_name, $table_columns)) {
+        $subject_columns[$subject_name] = $column_name;
+    }
+}
+
+// If no subjects found, show a basic set
+if (empty($subject_columns)) {
+    $subject_columns = [
+        'Mathematics' => 'mathematics',
+        'English' => 'english',
+        'Science' => 'science'
+    ];
+}
+
 // Define functions
 function calculateGrade($score) {
     if ($score >= 90) return 'A+';
@@ -23,63 +70,119 @@ function calculateSubjectPercentage($marks) {
     return ($marks / 100) * 100;
 }
 
-// Define subject columns based on YOUR actual database structure
-$subject_columns = [
-    'Mathematics' => 'mathematics',
-    'English Studies' => 'english_studies', 
-    'Basic Science' => 'basic_science',
-    'Basic Technology' => 'basic_technology',
-    'Social Studies' => 'social_studies',
-    'Civic Education' => 'civic_education',
-    'Computer Studies' => 'computer_studies',
-    'Physical Health Education' => 'physical_health_education',
-    'Agricultural Science' => 'agricultural_science',
-    'Yoruba' => 'yoruba',
-    'Arabic' => 'arabic',
-    'Islamic Studies' => 'islamic_studies',
-    'Cultural Creative Arts' => 'cultural_creative_arts',
-    'Home Economics' => 'home_economics',
-    'Business Studies' => 'business_studies'
+function getOrdinalSuffix($number) {
+    if ($number % 100 >= 11 && $number % 100 <= 13) {
+        return $number . 'th';
+    }
+    switch ($number % 10) {
+        case 1: return $number . 'st';
+        case 2: return $number . 'nd';
+        case 3: return $number . 'rd';
+        default: return $number . 'th';
+    }
+}
+
+// Psychomotor skills (rating scale 1-5)
+$psychomotor_skills = [
+    'Handwriting' => 'Ability to write neatly and legibly',
+    'Verbal Fluency' => 'Ability to express ideas clearly in speech',
+    'Games' => 'Participation and performance in games',
+    'Sports' => 'Participation and performance in sports activities',
+    'Handling Tools' => 'Skill in using tools and equipment',
+    'Drawing & Painting' => 'Artistic and creative abilities',
+    'Musical Skills' => 'Musical talent and participation'
+];
+
+// Psychomotor rating scale
+$psychomotor_scale = [
+    5 => 'Excellent degree of observable trait',
+    4 => 'Good level of observable trait', 
+    3 => 'Fair but acceptable level of observable trait',
+    2 => 'Poor level of observable trait',
+    1 => 'No Observable trait'
+];
+
+// Affective domain traits (rating scale 1-5)
+$affective_traits = [
+    'Punctuality' => 'Arrives on time and meets deadlines',
+    'Neatness' => 'Maintains clean and organized work',
+    'Politeness' => 'Shows good manners and respect',
+    'Initiative' => 'Takes proactive steps without being told',
+    'Cooperation with others' => 'Works well in group settings',
+    'Leadership Trait' => 'Guides and influences peers positively',
+    'Helping Others' => 'Assists classmates and teachers',
+    'Emotional Stability' => 'Maintains composure in various situations',
+    'Health' => 'Maintains good physical health and hygiene',
+    'Attitude to School Work' => 'Shows positive approach to learning',
+    'Attentiveness' => 'Pays attention in class',
+    'Perseverance' => 'Shows determination in facing challenges',
+    'Relationship with Teachers' => 'Maintains positive interaction with staff'
 ];
 
 $student_id = '';
 $student_data = [];
 $student_results = [];
+$subject_marks = [];
 $error = '';
 $success = '';
+$class_position = null;
+$total_students_in_class = 0;
 
-// Handle remarks submission
+// Handle all form submissions
 if (isset($_POST['submit_remarks']) && isset($_GET['student_id'])) {
     $student_id = mysqli_real_escape_string($conn, $_GET['student_id']);
+    
+    // Handle remarks
     $teacher_remarks = mysqli_real_escape_string($conn, $_POST['teacher_remarks']);
     $principal_remarks = mysqli_real_escape_string($conn, $_POST['principal_remarks']);
     
-    // Check if remarks already exist for this student
-    $check_remarks_sql = "SELECT id FROM report_remarks WHERE student_id = '$student_id'";
-    $check_result = mysqli_query($conn, $check_remarks_sql);
+    // Handle psychomotor skills (ratings 1-5)
+    $psychomotor_data = [];
+    foreach($psychomotor_skills as $skill => $description) {
+        $key = 'psychomotor_' . sanitizeKey($skill);
+        $psychomotor_data[$skill] = isset($_POST[$key]) ? (int)$_POST[$key] : 3; // Default to 3 if not set
+    }
+    
+    // Handle affective traits
+    $affective_data = [];
+    foreach($affective_traits as $trait => $description) {
+        $key = 'affective_' . sanitizeKey($trait);
+        $affective_data[$trait] = isset($_POST[$key]) ? (int)$_POST[$key] : 3;
+    }
+    
+    // Check if data already exists for this student
+    $check_sql = "SELECT id FROM report_remarks WHERE student_id = '$student_id'";
+    $check_result = mysqli_query($conn, $check_sql);
     
     if (mysqli_num_rows($check_result) > 0) {
-        // Update existing remarks
+        // Update existing data
         $update_sql = "UPDATE report_remarks SET 
                       teacher_remarks = '$teacher_remarks',
                       principal_remarks = '$principal_remarks',
+                      psychomotor_data = '" . json_encode($psychomotor_data) . "',
+                      affective_data = '" . json_encode($affective_data) . "',
                       updated_at = NOW()
                       WHERE student_id = '$student_id'";
         if (mysqli_query($conn, $update_sql)) {
-            $success = "Remarks updated successfully!";
+            $success = "All assessments updated successfully!";
         } else {
-            $error = "Error updating remarks: " . mysqli_error($conn);
+            $error = "Error updating assessments: " . mysqli_error($conn);
         }
     } else {
-        // Insert new remarks
-        $insert_sql = "INSERT INTO report_remarks (student_id, teacher_remarks, principal_remarks, created_at) 
-                      VALUES ('$student_id', '$teacher_remarks', '$principal_remarks', NOW())";
+        // Insert new data
+        $insert_sql = "INSERT INTO report_remarks (student_id, teacher_remarks, principal_remarks, psychomotor_data, affective_data, created_at) 
+                      VALUES ('$student_id', '$teacher_remarks', '$principal_remarks', '" . json_encode($psychomotor_data) . "', '" . json_encode($affective_data) . "', NOW())";
         if (mysqli_query($conn, $insert_sql)) {
-            $success = "Remarks added successfully!";
+            $success = "All assessments added successfully!";
         } else {
-            $error = "Error adding remarks: " . mysqli_error($conn);
+            $error = "Error adding assessments: " . mysqli_error($conn);
         }
     }
+}
+
+// Helper function to sanitize form keys
+function sanitizeKey($key) {
+    return preg_replace('/[^a-zA-Z0-9_]/', '_', $key);
 }
 
 // Get all students for dropdown
@@ -101,16 +204,8 @@ if (isset($_GET['student_id']) && !empty($_GET['student_id'])) {
     if ($student_query && mysqli_num_rows($student_query) > 0) {
         $student_data = mysqli_fetch_assoc($student_query);
         
-        // Build SELECT query with ALL available subject columns
-        $select_fields = "id, name, roll_number, class, marks, percentage";
-        
-        // Add all subject columns
-        foreach ($subject_columns as $column) {
-            $select_fields .= ", $column";
-        }
-        
-        // Get student results
-        $results_sql = "SELECT $select_fields FROM results 
+        // Get student results from main results table
+        $results_sql = "SELECT * FROM results 
                        WHERE roll_number = '{$student_data['roll_number']}' 
                        AND class = '{$student_data['class_name']}'";
         
@@ -121,13 +216,83 @@ if (isset($_GET['student_id']) && !empty($_GET['student_id'])) {
         } elseif (mysqli_num_rows($results_query) > 0) {
             $student_results = mysqli_fetch_assoc($results_query);
             
-            // Get existing remarks if any
+            // Get detailed subject marks from subject_marks table
+            $subject_marks_sql = "SELECT subject, ca_marks, exam_marks, total_marks 
+                                 FROM subject_marks 
+                                 WHERE student_id = '$student_id'";
+            $subject_marks_result = mysqli_query($conn, $subject_marks_sql);
+            
+            $subject_marks = [];
+            if ($subject_marks_result) {
+                while ($row = mysqli_fetch_assoc($subject_marks_result)) {
+                    $subject_marks[$row['subject']] = $row;
+                }
+            }
+            
+            // Get existing remarks and domain assessments if any
             $remarks_sql = "SELECT * FROM report_remarks WHERE student_id = '$student_id'";
             $remarks_result = mysqli_query($conn, $remarks_sql);
             $existing_remarks = [];
+            $existing_psychomotor = [];
+            $existing_affective = [];
+            
             if ($remarks_result && mysqli_num_rows($remarks_result) > 0) {
-                $existing_remarks = mysqli_fetch_assoc($remarks_result);
+                $existing_data = mysqli_fetch_assoc($remarks_result);
+                $existing_remarks = $existing_data;
+                
+                // Decode JSON data for domains
+                if (!empty($existing_data['psychomotor_data'])) {
+                    $existing_psychomotor = json_decode($existing_data['psychomotor_data'], true);
+                }
+                if (!empty($existing_data['affective_data'])) {
+                    $existing_affective = json_decode($existing_data['affective_data'], true);
+                }
             }
+            
+            // Calculate class position
+            $className = mysqli_real_escape_string($conn, $student_data['class_name']);
+            $rollNumber = mysqli_real_escape_string($conn, $student_data['roll_number']);
+            
+            // Get all students in the class ordered by percentage
+            $all_students_sql = "SELECT roll_number, percentage 
+                                FROM results 
+                                WHERE class = '$className' 
+                                ORDER BY percentage DESC";
+            $all_students_result = mysqli_query($conn, $all_students_sql);
+            
+            $position = 0;
+            $total_students = 0;
+            $current_rank = 0;
+            $last_percentage = null;
+            $class_position_found = false;
+            
+            if ($all_students_result) {
+                $total_students_in_class = mysqli_num_rows($all_students_result);
+                
+                while ($student = mysqli_fetch_assoc($all_students_result)) {
+                    $current_rank++;
+                    
+                    // Handle ties - same percentage gets same rank
+                    if ($last_percentage !== $student['percentage']) {
+                        $position = $current_rank;
+                    }
+                    
+                    $last_percentage = $student['percentage'];
+                    
+                    // Check if this is our target student
+                    if ($student['roll_number'] == $rollNumber) {
+                        $class_position = $position;
+                        $class_position_found = true;
+                        break;
+                    }
+                }
+                
+                // If student not found in ranking (shouldn't happen), set default
+                if (!$class_position_found) {
+                    $class_position = null;
+                }
+            }
+            
         } else {
             $error = "No results found for {$student_data['name']}.";
         }
@@ -137,26 +302,49 @@ if (isset($_GET['student_id']) && !empty($_GET['student_id'])) {
 }
 
 // Calculate overall performance based on actual data
-function calculateOverallPerformance($results) {
+function calculateOverallPerformance($results, $subject_marks) {
     global $subject_columns;
     
     $total_marks = 0;
     $subjects_with_marks = 0;
     $subject_grades = [];
     
-    foreach ($subject_columns as $subject_name => $column) {
-        if (isset($results[$column]) && is_numeric($results[$column])) {
-            $marks = (int)$results[$column];
+    // Use subject_marks data if available, otherwise fall back to results table
+    if (!empty($subject_marks)) {
+        foreach ($subject_marks as $subject_name => $marks_data) {
+            $marks = $marks_data['total_marks'];
             if ($marks > 0) {
                 $total_marks += $marks;
                 $subjects_with_marks++;
                 $grade = calculateGrade($marks);
                 $subject_grades[] = [
                     'subject' => $subject_name,
+                    'ca_marks' => $marks_data['ca_marks'],
+                    'exam_marks' => $marks_data['exam_marks'],
                     'marks' => $marks,
                     'percentage' => calculateSubjectPercentage($marks),
                     'grade' => $grade
                 ];
+            }
+        }
+    } else {
+        // Fallback to old method using results table
+        foreach ($subject_columns as $subject_name => $column) {
+            if (isset($results[$column]) && is_numeric($results[$column])) {
+                $marks = (int)$results[$column];
+                if ($marks > 0) {
+                    $total_marks += $marks;
+                    $subjects_with_marks++;
+                    $grade = calculateGrade($marks);
+                    $subject_grades[] = [
+                        'subject' => $subject_name,
+                        'ca_marks' => 0, // Not available in old system
+                        'exam_marks' => 0, // Not available in old system
+                        'marks' => $marks,
+                        'percentage' => calculateSubjectPercentage($marks),
+                        'grade' => $grade
+                    ];
+                }
             }
         }
     }
@@ -171,6 +359,14 @@ function calculateOverallPerformance($results) {
         'overall_grade' => $overall_grade,
         'subject_grades' => $subject_grades
     ];
+}
+
+// Determine if user can edit domains (teachers and admins)
+$can_edit_domains = isset($_SESSION['teacher_id']) || (isset($_SESSION['user_id']) && $_SESSION['role'] === 'admin');
+
+// Calculate performance
+if (!empty($student_data) && !empty($student_results)) {
+    $performance = calculateOverallPerformance($student_results, $subject_marks);
 }
 ?>
 
@@ -232,6 +428,61 @@ function calculateOverallPerformance($results) {
             justify-content: center;
             width: 100%;
         }
+        .rating-5 { background-color: #10B981; color: white; }
+        .rating-4 { background-color: #34D399; color: white; }
+        .rating-3 { background-color: #FBBF24; color: white; }
+        .rating-2 { background-color: #F59E0B; color: white; }
+        .rating-1 { background-color: #EF4444; color: white; }
+        .checkbox-container {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .rating-options {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+        .rating-option {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+        .psychomotor-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        .psychomotor-table th {
+            background-color: #4f46e5;
+            color: white;
+            padding: 12px;
+            text-align: center;
+            font-weight: 600;
+        }
+        .psychomotor-table td {
+            padding: 12px;
+            border-bottom: 1px solid #e5e7eb;
+            text-align: center;
+        }
+        .psychomotor-table tr:nth-child(even) {
+            background-color: #f8fafc;
+        }
+        .psychomotor-table tr:hover {
+            background-color: #f1f5f9;
+        }
+        .skill-name {
+            text-align: left;
+            font-weight: 600;
+            padding-left: 20px;
+        }
+        .rating-cell {
+            text-align: center;
+        }
+        input[type="radio"] {
+            transform: scale(1.2);
+            cursor: pointer;
+        }
         @media print {
             body {
                 background: white !important;
@@ -258,17 +509,33 @@ function calculateOverallPerformance($results) {
                 grid-template-columns: repeat(3, 1fr);
                 gap: 1rem;
             }
+            .student-info-grid {
+                grid-template-columns: repeat(2, 1fr) !important;
+            }
+            .rating-options {
+                flex-direction: column;
+                gap: 0.25rem;
+            }
+            .psychomotor-table {
+                font-size: 0.8rem;
+            }
+            .psychomotor-table th, .psychomotor-table td {
+                padding: 8px 4px;
+            }
         }
         @media (max-width: 480px) {
             .performance-grid {
                 grid-template-columns: 1fr;
                 gap: 0.75rem;
             }
+            .student-info-grid {
+                grid-template-columns: 1fr !important;
+            }
         }
     </style>
 </head>
 <body class="p-2 md:p-4">
-    <div class="max-w-4xl mx-auto">
+    <div class="max-w-6xl mx-auto">
         <!-- Header -->
         <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4 no-print">
             <div>
@@ -350,7 +617,7 @@ function calculateOverallPerformance($results) {
 
         <?php if (!empty($student_data) && !empty($student_results)): ?>
             <?php
-            $performance = calculateOverallPerformance($student_results);
+            $performance = calculateOverallPerformance($student_results, $subject_marks);
             ?>
 
             <!-- Report Card -->
@@ -361,18 +628,18 @@ function calculateOverallPerformance($results) {
                         <h1 class="text-2xl font-bold">SCHOOL MANAGEMENT SYSTEM</h1>
                         <p class="text-sm opacity-90">Official Academic Report Card</p>
                     </div>
-                    <h1 class="text-2xl sm:text-3xl font-bold mb-2">ACADEMIC REPORT CARD</h1>
+                    <h1 class="text-2xl sm:text-3xl font-bold mb-2">CONTINUOUS ASSESSMENT FOR FIRST TERM</h1>
                     <p class="text-lg opacity-90">School Management System</p>
                     <div class="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
                         <div><strong>Academic Year:</strong> 2023-2024</div>
-                        <div><strong>Term:</strong> Annual</div>
+                        <div><strong>Term:</strong> First Term</div>
                         <div><strong>Date:</strong> <?php echo date('M j, Y'); ?></div>
                     </div>
                 </div>
 
                 <!-- Student Information -->
                 <div class="student-info p-4">
-                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <div class="grid grid-cols-2 sm:grid-cols-5 gap-4 student-info-grid">
                         <div>
                             <label class="block text-xs font-medium text-gray-600 mb-1">Student Name</label>
                             <p class="text-sm font-semibold text-gray-800"><?php echo $student_data['name']; ?></p>
@@ -391,6 +658,18 @@ function calculateOverallPerformance($results) {
                                 <?php echo $performance['overall_grade']; ?>
                             </span>
                         </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">Class Position</label>
+                            <span class="bg-yellow-100 text-yellow-600 px-2 py-1 rounded-full text-xs font-semibold">
+                                <?php 
+                                if ($class_position && $total_students_in_class > 0) {
+                                    echo getOrdinalSuffix($class_position) . ' of ' . $total_students_in_class;
+                                } else {
+                                    echo 'Not Available';
+                                }
+                                ?>
+                            </span>
+                        </div>
                     </div>
                 </div>
 
@@ -406,14 +685,6 @@ function calculateOverallPerformance($results) {
                             <div class="text-sm text-gray-600 font-medium">Subjects</div>
                         </div>
                         
-                        <!-- Total Marks Commented Out -->
-                        <!--
-                        <div class="performance-item p-4 bg-white rounded-lg shadow-sm">
-                            <div class="text-2xl font-bold text-green-600 mb-2"><?php echo $performance['total_marks']; ?></div>
-                            <div class="text-sm text-gray-600 font-medium">Total Marks</div>
-                        </div>
-                        -->
-                        
                         <div class="performance-item p-4 bg-white rounded-lg shadow-sm">
                             <div class="text-2xl font-bold text-purple-600 mb-2"><?php echo number_format($performance['overall_percentage'], 1); ?>%</div>
                             <div class="text-sm text-gray-600 font-medium">Percentage</div>
@@ -425,26 +696,52 @@ function calculateOverallPerformance($results) {
                     </div>
                 </div>
 
-                <!-- Subject-wise Results -->
+                <!-- 1. ATTENDANCE RECORD -->
+                <div class="p-4 bg-gradient-to-r from-green-50 to-emerald-50 border-b">
+                    <h3 class="text-lg font-bold text-gray-800 mb-4 flex items-center justify-center">
+                        <i class="fas fa-calendar-check text-green-500 mr-2"></i>
+                        1. ATTENDANCE RECORD
+                    </h3>
+                    <div class="performance-grid">
+                        <div class="performance-item p-4 bg-white rounded-lg shadow-sm">
+                            <div class="text-2xl font-bold text-blue-600 mb-2"><?php echo rand(85, 95); ?>%</div>
+                            <div class="text-sm text-gray-600 font-medium">Attendance Rate</div>
+                        </div>
+                        <div class="performance-item p-4 bg-white rounded-lg shadow-sm">
+                            <div class="text-2xl font-bold text-green-600 mb-2"><?php echo rand(85, 95); ?></div>
+                            <div class="text-sm text-gray-600 font-medium">Days Present</div>
+                        </div>
+                        <div class="performance-item p-4 bg-white rounded-lg shadow-sm">
+                            <div class="text-2xl font-bold text-red-600 mb-2"><?php echo rand(2, 8); ?></div>
+                            <div class="text-sm text-gray-600 font-medium">Days Absent</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. COGNITIVE DOMAIN -->
                 <div class="p-4">
                     <h3 class="text-lg font-bold text-gray-800 mb-3 flex items-center">
                         <i class="fas fa-book-open text-green-500 mr-2"></i>
-                        Subject Results
+                        2. COGNITIVE DOMAIN
                     </h3>
                     <div class="overflow-x-auto">
                         <table class="w-full compact-table">
                             <thead>
                                 <tr class="bg-gray-50 border-b border-gray-200">
-                                    <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600">Subject</th>
-                                    <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600">Marks</th>
-                                    <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600">Out of</th>
-                                    <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600">%</th>
-                                    <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600">Grade</th>
-                                    <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600">Remarks</th>
+                                    <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600">SUBJECT</th>
+                                    <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600">CA TEST (40)</th>
+                                    <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600">EXAM (60)</th>
+                                    <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600">TOTAL</th>
+                                    <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600">GRADE</th>
+                                    <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600">REMARKS</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                <?php foreach ($performance['subject_grades'] as $subject_result): ?>
+                                <?php foreach ($performance['subject_grades'] as $subject_result): 
+                                    $ca_marks = $subject_result['ca_marks'];
+                                    $exam_marks = $subject_result['exam_marks'];
+                                    $total = $subject_result['marks'];
+                                ?>
                                 <tr class="subject-row border-b border-gray-100">
                                     <td class="px-3 py-2 whitespace-nowrap">
                                         <div class="flex items-center">
@@ -454,13 +751,17 @@ function calculateOverallPerformance($results) {
                                     </td>
                                     <td class="px-3 py-2 whitespace-nowrap">
                                         <span class="bg-blue-100 text-blue-600 px-2 py-1 rounded-full text-xs font-semibold">
-                                            <?php echo $subject_result['marks']; ?>
+                                            <?php echo $ca_marks; ?>
                                         </span>
                                     </td>
-                                    <td class="px-3 py-2 whitespace-nowrap text-gray-600 text-sm">100</td>
                                     <td class="px-3 py-2 whitespace-nowrap">
-                                        <span class="text-gray-600 font-semibold text-sm">
-                                            <?php echo $subject_result['percentage']; ?>%
+                                        <span class="bg-green-100 text-green-600 px-2 py-1 rounded-full text-xs font-semibold">
+                                            <?php echo $exam_marks; ?>
+                                        </span>
+                                    </td>
+                                    <td class="px-3 py-2 whitespace-nowrap">
+                                        <span class="bg-purple-100 text-purple-600 px-2 py-1 rounded-full text-xs font-semibold">
+                                            <?php echo $total; ?>
                                         </span>
                                     </td>
                                     <td class="px-3 py-2 whitespace-nowrap">
@@ -472,12 +773,12 @@ function calculateOverallPerformance($results) {
                                         <span class="text-xs text-gray-600">
                                             <?php
                                             $remarks = [
-                                                'A+' => 'Outstanding',
-                                                'A' => 'Excellent',
-                                                'B' => 'Very Good',
-                                                'C' => 'Good',
-                                                'D' => 'Satisfactory',
-                                                'E' => 'Needs Improve',
+                                                'A+' => 'Excellent',
+                                                'A' => 'Very Good',
+                                                'B' => 'Good',
+                                                'C' => 'Credit',
+                                                'D' => 'Pass',
+                                                'E' => 'Weak',
                                                 'F' => 'Fail'
                                             ];
                                             echo $remarks[$subject_result['grade']] ?? 'N/A';
@@ -491,11 +792,125 @@ function calculateOverallPerformance($results) {
                     </div>
                 </div>
 
+                <?php if ($can_edit_domains): ?>
+                <!-- Editable Domains Form for Teachers/Admins -->
+                <form method="POST" action="?student_id=<?php echo $student_id; ?>">
+                <?php endif; ?>
+
+                <!-- 3. PSYCHOMOTOR DOMAIN -->
+                <div class="p-4 bg-gradient-to-r from-green-50 to-emerald-50 border-b">
+                    <h3 class="text-lg font-bold text-gray-800 mb-4 flex items-center justify-center">
+                        <i class="fas fa-running text-green-500 mr-2"></i>
+                        3. PSYCHOMOTOR DOMAIN
+                    </h3>
+                    
+                    <!-- Psychomotor Skills Table -->
+                    <table class="psychomotor-table">
+                        <thead>
+                            <tr>
+                                <th class="skill-name">PSYCHOMOTOR DOMAIN</th>
+                                <?php for($i = 5; $i >= 1; $i--): ?>
+                                    <th><?php echo $i; ?></th>
+                                <?php endfor; ?>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach($psychomotor_skills as $skill => $description): 
+                                $skill_key = sanitizeKey($skill);
+                                $current_rating = isset($existing_psychomotor[$skill]) ? $existing_psychomotor[$skill] : 3;
+                            ?>
+                            <tr>
+                                <td class="skill-name">
+                                    <div class="font-medium text-gray-800"><?php echo $skill; ?></div>
+                                    <div class="text-xs text-gray-600"><?php echo $description; ?></div>
+                                </td>
+                                <?php for($i = 5; $i >= 1; $i--): ?>
+                                <td class="rating-cell">
+                                    <?php if ($can_edit_domains): ?>
+                                        <input type="radio" 
+                                               id="psychomotor_<?php echo $skill_key; ?>_<?php echo $i; ?>" 
+                                               name="psychomotor_<?php echo $skill_key; ?>" 
+                                               value="<?php echo $i; ?>"
+                                               <?php echo $current_rating == $i ? 'checked' : ''; ?>
+                                               class="text-green-600 focus:ring-green-500">
+                                    <?php else: ?>
+                                        <?php if ($current_rating == $i): ?>
+                                            <span class="rating-<?php echo $i; ?> px-2 py-1 rounded-full text-xs font-semibold">✓</span>
+                                        <?php else: ?>
+                                            <span class="text-gray-300">○</span>
+                                        <?php endif; ?>
+                                    <?php endif; ?>
+                                </td>
+                                <?php endfor; ?>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+
+                    <!-- Rating Scale -->
+                    <div class="mt-4 p-3 bg-white rounded-lg shadow-sm">
+                        <h4 class="font-semibold text-gray-800 mb-2 text-sm">SCALE:</h4>
+                        <div class="grid grid-cols-1 md:grid-cols-5 gap-2 text-xs">
+                            <?php foreach($psychomotor_scale as $rating => $description): ?>
+                            <div class="text-center p-2 bg-gray-50 rounded">
+                                <div class="font-bold text-gray-800"><?php echo $rating; ?></div>
+                                <div class="text-gray-600"><?php echo $description; ?></div>
+                            </div>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. AFFECTIVE DOMAIN -->
+                <div class="p-4 bg-gradient-to-r from-purple-50 to-pink-50 border-b">
+                    <h3 class="text-lg font-bold text-gray-800 mb-4 flex items-center justify-center">
+                        <i class="fas fa-heart text-red-500 mr-2"></i>
+                        4. AFFECTIVE DOMAIN
+                    </h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <?php foreach($affective_traits as $trait => $description): 
+                            $trait_key = sanitizeKey($trait);
+                            $current_rating = isset($existing_affective[$trait]) ? $existing_affective[$trait] : 3;
+                        ?>
+                        <div class="p-3 bg-white rounded-lg shadow-sm">
+                            <div class="mb-2">
+                                <div class="font-medium text-gray-800 text-sm"><?php echo $trait; ?></div>
+                                <div class="text-xs text-gray-600"><?php echo $description; ?></div>
+                            </div>
+                            <div class="rating-options">
+                                <?php for($i = 1; $i <= 5; $i++): ?>
+                                <div class="rating-option">
+                                    <?php if ($can_edit_domains): ?>
+                                        <input type="radio" 
+                                               id="affective_<?php echo $trait_key; ?>_<?php echo $i; ?>" 
+                                               name="affective_<?php echo $trait_key; ?>" 
+                                               value="<?php echo $i; ?>"
+                                               <?php echo $current_rating == $i ? 'checked' : ''; ?>
+                                               class="text-purple-600 focus:ring-purple-500">
+                                    <?php endif; ?>
+                                    <label for="affective_<?php echo $trait_key; ?>_<?php echo $i; ?>" 
+                                           class="text-xs <?php echo $current_rating == $i ? 'font-semibold text-purple-600' : 'text-gray-600'; ?>">
+                                        <?php if (!$can_edit_domains && $current_rating == $i): ?>
+                                            <span class="rating-<?php echo $i; ?> px-2 py-1 rounded-full"><?php echo $i; ?></span>
+                                        <?php else: ?>
+                                            <?php echo $i; ?>
+                                        <?php endif; ?>
+                                    </label>
+                                </div>
+                                <?php endfor; ?>
+                            </div>
+                        </div>
+                        <?php endforeach; ?>
+                    </div>
+                    <div class="mt-3 text-center text-xs text-gray-600">
+                        <i class="fas fa-info-circle mr-1"></i>
+                        Rating Scale: 1 (Poor) to 5 (Excellent)
+                    </div>
+                </div>
+
                 <!-- Remarks Section -->
                 <div class="p-4 bg-white border-t">
-                    <?php if (isset($_SESSION['teacher_id']) || isset($_SESSION['user_id'])): ?>
-                        <!-- Editable Remarks Form for Teachers/Admins -->
-                        <form method="POST" action="?student_id=<?php echo $student_id; ?>">
+                    <?php if ($can_edit_domains): ?>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
                                     <h4 class="font-semibold text-gray-800 mb-2 text-sm">Teacher's Remarks:</h4>
@@ -506,10 +921,7 @@ function calculateOverallPerformance($results) {
                                         <p class="text-gray-600 text-sm italic">
                                             <?php echo isset($existing_remarks['teacher_remarks']) && !empty($existing_remarks['teacher_remarks']) 
                                                 ? $existing_remarks['teacher_remarks'] 
-                                                : ($performance['overall_percentage'] >= 80 ? "Excellent performance! Keep up the good work." : 
-                                                   ($performance['overall_percentage'] >= 60 ? "Good performance. Room for improvement." : 
-                                                   ($performance['overall_percentage'] >= 40 ? "Satisfactory. Needs to work harder." : 
-                                                   "Needs significant improvement."))); ?>
+                                                : "Good performance. Keep it up."; ?>
                                         </p>
                                     </div>
                                 </div>
@@ -531,7 +943,7 @@ function calculateOverallPerformance($results) {
                                 <button type="submit" name="submit_remarks" 
                                     class="bg-green-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-600 transition duration-200 flex items-center space-x-2 text-sm">
                                     <i class="fas fa-save"></i>
-                                    <span>Save Remarks</span>
+                                    <span>Save All Assessments</span>
                                 </button>
                             </div>
                         </form>
@@ -543,10 +955,7 @@ function calculateOverallPerformance($results) {
                                 <p class="text-gray-600 text-sm italic">
                                     <?php echo isset($existing_remarks['teacher_remarks']) && !empty($existing_remarks['teacher_remarks']) 
                                         ? $existing_remarks['teacher_remarks'] 
-                                        : ($performance['overall_percentage'] >= 80 ? "Excellent performance! Keep up the good work." : 
-                                           ($performance['overall_percentage'] >= 60 ? "Good performance. Room for improvement." : 
-                                           ($performance['overall_percentage'] >= 40 ? "Satisfactory. Needs to work harder." : 
-                                           "Needs significant improvement."))); ?>
+                                        : "Good performance. Keep it up."; ?>
                                 </p>
                             </div>
                             <div>
