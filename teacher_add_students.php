@@ -15,6 +15,7 @@ if (isset($_POST['add_student'])) {
     $name = mysqli_real_escape_string($conn, $_POST['name']);
     $roll_number = mysqli_real_escape_string($conn, $_POST['roll_number']);
     $class_name = mysqli_real_escape_string($conn, $_POST['class_name']);
+    $gender = mysqli_real_escape_string($conn, $_POST['gender']);
     
     // Verify teacher has access to this class
     $teacher_classes = array_map('trim', explode(',', $_SESSION['teacher_classes']));
@@ -28,13 +29,13 @@ if (isset($_POST['add_student'])) {
         if (mysqli_num_rows($check_result) > 0) {
             $error = "A student with this roll number already exists in $class_name.";
         } else {
-            $sql = "INSERT INTO students (name, roll_number, class_name, created_by) 
-                    VALUES ('$name', '$roll_number', '$class_name', 'teacher_".$_SESSION['teacher_id']."')";
+            $sql = "INSERT INTO students (name, roll_number, class_name, gender, created_by) 
+                    VALUES ('$name', '$roll_number', '$class_name', '$gender', 'teacher_".$_SESSION['teacher_id']."')";
             
             if (mysqli_query($conn, $sql)) {
                 $success = "Student added successfully to $class_name!";
                 // Clear form
-                $_POST['name'] = $_POST['roll_number'] = '';
+                $_POST['name'] = $_POST['roll_number'] = $_POST['gender'] = '';
             } else {
                 $error = "Error adding student: " . mysqli_error($conn);
             }
@@ -200,6 +201,19 @@ $teacher_classes = array_map('trim', explode(',', $_SESSION['teacher_classes']))
                            value="<?php echo isset($_POST['roll_number']) ? htmlspecialchars($_POST['roll_number']) : ''; ?>"
                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition duration-200"
                            placeholder="Enter roll number">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        <i class="fas fa-venus-mars text-blue-500 mr-2"></i>
+                        Gender
+                    </label>
+                    <select name="gender" required 
+                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition duration-200">
+                        <option value="">Select Gender</option>
+                        <option value="Male" <?php echo (isset($_POST['gender']) && $_POST['gender'] == 'Male') ? 'selected' : ''; ?>>Male</option>
+                        <option value="Female" <?php echo (isset($_POST['gender']) && $_POST['gender'] == 'Female') ? 'selected' : ''; ?>>Female</option>
+                    </select>
                 </div>
 
                 <div>

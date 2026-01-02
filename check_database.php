@@ -1,77 +1,60 @@
 <?php
-// check_database.php
-echo "<h3>Database Diagnostic</h3>";
+session_start();
+include('init.php');
 
-// Database connection
-$connection = mysql_connect("localhost", "root", "");
-if (!$connection) {
-    die("Connection failed: " . mysql_error());
+echo "<h2>🔍 Database Diagnostic</h2>";
+
+// 1. Check if results table exists
+$tables = mysqli_query($conn, "SHOW TABLES");
+echo "<h3>📊 Existing Tables:</h3>";
+while ($table = mysqli_fetch_array($tables)) {
+    echo "<p>• " . $table[0] . "</p>";
 }
 
-// Select database
-$db_selected = mysql_select_db("student_management", $connection);
-if (!$db_selected) {
-    echo "Database doesn't exist. Let me create it...<br>";
-    
-    // Create database
-    if (mysql_query("CREATE DATABASE student_management", $connection)) {
-        echo "Database created successfully!<br>";
-        mysql_select_db("student_management", $connection);
-    } else {
-        die("Failed to create database: " . mysql_error());
+// 2. Check results table structure
+echo "<h3>📋 Results Table Structure:</h3>";
+$structure = mysqli_query($conn, "DESCRIBE results");
+if ($structure) {
+    echo "<table border='1' cellpadding='5'>";
+    echo "<tr><th>Field</th><th>Type</th><th>Null</th><th>Key</th><th>Default</th><th>Extra</th></tr>";
+    while ($row = mysqli_fetch_assoc($structure)) {
+        echo "<tr>";
+        echo "<td>" . $row['Field'] . "</td>";
+        echo "<td>" . $row['Type'] . "</td>";
+        echo "<td>" . $row['Null'] . "</td>";
+        echo "<td>" . $row['Key'] . "</td>";
+        echo "<td>" . $row['Default'] . "</td>";
+        echo "<td>" . $row['Extra'] . "</td>";
+        echo "</tr>";
     }
+    echo "</table>";
+} else {
+    echo "<p style='color: red;'>❌ Results table doesn't exist!</p>";
 }
 
-// Check if tables exist and create them if missing
-$tables = ['classes', 'students', 'users'];
-foreach ($tables as $table) {
-    $result = mysql_query("SHOW TABLES LIKE '$table'");
-    if (mysql_num_rows($result) == 0) {
-        echo "Table '$table' doesn't exist. Creating...<br>";
-        
-        if ($table == 'classes') {
-            $sql = "CREATE TABLE classes (
-                class_id INT AUTO_INCREMENT PRIMARY KEY,
-                class_name VARCHAR(100) NOT NULL UNIQUE,
-                section VARCHAR(50),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )";
-        } elseif ($table == 'students') {
-            $sql = "CREATE TABLE students (
-                student_id INT AUTO_INCREMENT PRIMARY KEY,
-                name VARCHAR(100) NOT NULL,
-                email VARCHAR(100),
-                class_id INT,
-                roll_number VARCHAR(20),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )";
-        }
-        
-        if (mysql_query($sql)) {
-            echo "Table '$table' created successfully!<br>";
-        } else {
-            echo "Error creating table '$table': " . mysql_error() . "<br>";
-        }
-    } else {
-        echo "Table '$table' exists. Checking data...<br>";
-        
-        // Count records in table
-        $count_result = mysql_query("SELECT COUNT(*) as count FROM $table");
-        $count_row = mysql_fetch_assoc($count_result);
-        echo "Records in $table: " . $count_row['count'] . "<br>";
-        
-        // Show sample data
-        if ($table == 'classes') {
-            $data_result = mysql_query("SELECT * FROM $table LIMIT 5");
-            echo "Sample classes: ";
-            while ($row = mysql_fetch_assoc($data_result)) {
-                echo $row['class_name'] . ", ";
-            }
-            echo "<br>";
-        }
+// 3. Check if any data exists
+echo "<h3>📈 Sample Data Check:</h3>";
+$sample_data = mysqli_query($conn, "SELECT * FROM results LIMIT 3");
+if ($sample_data && mysqli_num_rows($sample_data) > 0) {
+    echo "<p style='color: green;'>✅ Data exists in results table</p>";
+    echo "<pre>";
+    while ($row = mysqli_fetch_assoc($sample_data)) {
+        print_r($row);
     }
+    echo "</pre>";
+} else {
+    echo "<p style='color: red;'>❌ No data in results table</p>";
 }
 
-mysql_close($connection);
-echo "<h4>Diagnostic complete!</h4>";
+// 4. Check students table
+echo "<h3>👨‍🎓 Students Table Check:</h3>";
+$students = mysqli_query($conn, "SELECT id, name, roll_number FROM students LIMIT 5");
+if ($students && mysqli_num_rows($students) > 0) {
+    echo "<p style='color: green;'>✅ Students table has data</p>";
+    while ($student = mysqli_fetch_assoc($students)) {
+        echo "<p>• " . $student['name'] . " (ID: " . $student['id'] . ", Roll: " . $student['roll_number'] . ")</p>";
+    }
+} else {
+    echo "<p style='color: red;'>❌ No students found</p>";
+}
 ?>

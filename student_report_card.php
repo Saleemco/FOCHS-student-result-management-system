@@ -57,7 +57,7 @@ if (empty($subject_columns)) {
 
 // Define functions
 function calculateGrade($score) {
-    if ($score >= 90) return 'A+';
+    if ($score >= 90) return 'A1';
     elseif ($score >= 80) return 'A';
     elseif ($score >= 70) return 'B';
     elseif ($score >= 60) return 'C';
@@ -82,15 +82,15 @@ function getOrdinalSuffix($number) {
     }
 }
 
-// Psychomotor skills (rating scale 1-5)
-$psychomotor_skills = [
-    'Handwriting' => 'Ability to write neatly and legibly',
-    'Verbal Fluency' => 'Ability to express ideas clearly in speech',
-    'Games' => 'Participation and performance in games',
-    'Sports' => 'Participation and performance in sports activities',
-    'Handling Tools' => 'Skill in using tools and equipment',
-    'Drawing & Painting' => 'Artistic and creative abilities',
-    'Musical Skills' => 'Musical talent and participation'
+// Psychomotor skills mapping to database columns
+$psychomotor_skills_db = [
+    'handwriting_rating' => ['name' => 'Handwriting', 'description' => 'Ability to write neatly and legibly'],
+    'verbal_fluency_rating' => ['name' => 'Verbal Fluency', 'description' => 'Ability to express ideas clearly in speech'],
+    'games_rating' => ['name' => 'Games', 'description' => 'Participation and performance in games'],
+    'sports_rating' => ['name' => 'Sports', 'description' => 'Participation and performance in sports activities'],
+    'handling_tools_rating' => ['name' => 'Handling Tools', 'description' => 'Skill in using tools and equipment'],
+    'drawing_painting_rating' => ['name' => 'Drawing & Painting', 'description' => 'Artistic and creative abilities'],
+    'musical_skills_rating' => ['name' => 'Musical Skills', 'description' => 'Musical talent and participation']
 ];
 
 // Psychomotor rating scale
@@ -102,21 +102,21 @@ $psychomotor_scale = [
     1 => 'No Observable trait'
 ];
 
-// Affective domain traits (rating scale 1-5)
-$affective_traits = [
-    'Punctuality' => 'Arrives on time and meets deadlines',
-    'Neatness' => 'Maintains clean and organized work',
-    'Politeness' => 'Shows good manners and respect',
-    'Initiative' => 'Takes proactive steps without being told',
-    'Cooperation with others' => 'Works well in group settings',
-    'Leadership Trait' => 'Guides and influences peers positively',
-    'Helping Others' => 'Assists classmates and teachers',
-    'Emotional Stability' => 'Maintains composure in various situations',
-    'Health' => 'Maintains good physical health and hygiene',
-    'Attitude to School Work' => 'Shows positive approach to learning',
-    'Attentiveness' => 'Pays attention in class',
-    'Perseverance' => 'Shows determination in facing challenges',
-    'Relationship with Teachers' => 'Maintains positive interaction with staff'
+// Affective domain traits mapping to database columns
+$affective_traits_db = [
+    'punctuality_rating' => ['name' => 'Punctuality', 'description' => 'Arrives on time and meets deadlines'],
+    'neatness_rating' => ['name' => 'Neatness', 'description' => 'Maintains clean and organized work'],
+    'politeness_rating' => ['name' => 'Politeness', 'description' => 'Shows good manners and respect'],
+    'initiative_rating' => ['name' => 'Initiative', 'description' => 'Takes proactive steps without being told'],
+    'cooperation_rating' => ['name' => 'Cooperation with others', 'description' => 'Works well in group settings'],
+    'leadership_rating' => ['name' => 'Leadership Trait', 'description' => 'Guides and influences peers positively'],
+    'helping_others_rating' => ['name' => 'Helping Others', 'description' => 'Assists classmates and teachers'],
+    'emotional_stability_rating' => ['name' => 'Emotional Stability', 'description' => 'Maintains composure in various situations'],
+    'health_rating' => ['name' => 'Health', 'description' => 'Maintains good physical health and hygiene'],
+    'attitude_school_work_rating' => ['name' => 'Attitude to School Work', 'description' => 'Shows positive approach to learning'],
+    'attentiveness_rating' => ['name' => 'Attentiveness', 'description' => 'Pays attention in class'],
+    'perseverance_rating' => ['name' => 'Perseverance', 'description' => 'Shows determination in facing challenges'],
+    'relationship_teachers_rating' => ['name' => 'Relationship with Teachers', 'description' => 'Maintains positive interaction with staff']
 ];
 
 $student_id = '';
@@ -138,16 +138,14 @@ if (isset($_POST['submit_remarks']) && isset($_GET['student_id'])) {
     
     // Handle psychomotor skills (ratings 1-5)
     $psychomotor_data = [];
-    foreach($psychomotor_skills as $skill => $description) {
-        $key = 'psychomotor_' . sanitizeKey($skill);
-        $psychomotor_data[$skill] = isset($_POST[$key]) ? (int)$_POST[$key] : 3; // Default to 3 if not set
+    foreach($psychomotor_skills_db as $db_field => $skill_info) {
+        $psychomotor_data[$db_field] = isset($_POST[$db_field]) ? (int)$_POST[$db_field] : 3;
     }
     
     // Handle affective traits
     $affective_data = [];
-    foreach($affective_traits as $trait => $description) {
-        $key = 'affective_' . sanitizeKey($trait);
-        $affective_data[$trait] = isset($_POST[$key]) ? (int)$_POST[$key] : 3;
+    foreach($affective_traits_db as $db_field => $trait_info) {
+        $affective_data[$db_field] = isset($_POST[$db_field]) ? (int)$_POST[$db_field] : 3;
     }
     
     // Check if data already exists for this student
@@ -180,11 +178,6 @@ if (isset($_POST['submit_remarks']) && isset($_GET['student_id'])) {
     }
 }
 
-// Helper function to sanitize form keys
-function sanitizeKey($key) {
-    return preg_replace('/[^a-zA-Z0-9_]/', '_', $key);
-}
-
 // Get all students for dropdown
 $students_sql = "SELECT id, name, roll_number, class_name FROM students ORDER BY class_name, name";
 $students_result = mysqli_query($conn, $students_sql);
@@ -203,6 +196,7 @@ if (isset($_GET['student_id']) && !empty($_GET['student_id'])) {
     
     if ($student_query && mysqli_num_rows($student_query) > 0) {
         $student_data = mysqli_fetch_assoc($student_query);
+        $class_name = $student_data['class_name'];
         
         // Get student results from main results table
         $results_sql = "SELECT * FROM results 
@@ -215,87 +209,115 @@ if (isset($_GET['student_id']) && !empty($_GET['student_id'])) {
             $error = "Database error: " . mysqli_error($conn);
         } elseif (mysqli_num_rows($results_query) > 0) {
             $student_results = mysqli_fetch_assoc($results_query);
-            
-            // Get detailed subject marks from subject_marks table
-            $subject_marks_sql = "SELECT subject, ca_marks, exam_marks, total_marks 
-                                 FROM subject_marks 
-                                 WHERE student_id = '$student_id'";
-            $subject_marks_result = mysqli_query($conn, $subject_marks_sql);
-            
-            $subject_marks = [];
-            if ($subject_marks_result) {
-                while ($row = mysqli_fetch_assoc($subject_marks_result)) {
-                    $subject_marks[$row['subject']] = $row;
-                }
-            }
-            
-            // Get existing remarks and domain assessments if any
-            $remarks_sql = "SELECT * FROM report_remarks WHERE student_id = '$student_id'";
-            $remarks_result = mysqli_query($conn, $remarks_sql);
-            $existing_remarks = [];
-            $existing_psychomotor = [];
-            $existing_affective = [];
-            
-            if ($remarks_result && mysqli_num_rows($remarks_result) > 0) {
-                $existing_data = mysqli_fetch_assoc($remarks_result);
-                $existing_remarks = $existing_data;
-                
-                // Decode JSON data for domains
-                if (!empty($existing_data['psychomotor_data'])) {
-                    $existing_psychomotor = json_decode($existing_data['psychomotor_data'], true);
-                }
-                if (!empty($existing_data['affective_data'])) {
-                    $existing_affective = json_decode($existing_data['affective_data'], true);
-                }
-            }
-            
-            // Calculate class position
-            $className = mysqli_real_escape_string($conn, $student_data['class_name']);
-            $rollNumber = mysqli_real_escape_string($conn, $student_data['roll_number']);
-            
-            // Get all students in the class ordered by percentage
-            $all_students_sql = "SELECT roll_number, percentage 
-                                FROM results 
-                                WHERE class = '$className' 
-                                ORDER BY percentage DESC";
-            $all_students_result = mysqli_query($conn, $all_students_sql);
-            
-            $position = 0;
-            $total_students = 0;
-            $current_rank = 0;
-            $last_percentage = null;
-            $class_position_found = false;
-            
-            if ($all_students_result) {
-                $total_students_in_class = mysqli_num_rows($all_students_result);
-                
-                while ($student = mysqli_fetch_assoc($all_students_result)) {
-                    $current_rank++;
-                    
-                    // Handle ties - same percentage gets same rank
-                    if ($last_percentage !== $student['percentage']) {
-                        $position = $current_rank;
-                    }
-                    
-                    $last_percentage = $student['percentage'];
-                    
-                    // Check if this is our target student
-                    if ($student['roll_number'] == $rollNumber) {
-                        $class_position = $position;
-                        $class_position_found = true;
-                        break;
-                    }
-                }
-                
-                // If student not found in ranking (shouldn't happen), set default
-                if (!$class_position_found) {
-                    $class_position = null;
-                }
-            }
-            
-        } else {
-            $error = "No results found for {$student_data['name']}.";
         }
+        
+        // Get subjects from subject_marks table where teachers upload
+        $subject_marks_sql = "SELECT subject, ca_marks, exam_marks, total_marks 
+                             FROM subject_marks 
+                             WHERE student_id = '$student_id'";
+        $subject_marks_result = mysqli_query($conn, $subject_marks_sql);
+        
+        $subject_marks = [];
+        if ($subject_marks_result) {
+            while ($row = mysqli_fetch_assoc($subject_marks_result)) {
+                $subject_marks[$row['subject']] = $row;
+            }
+        }
+        
+        // ========== REAL-TIME DATA INTEGRATION ==========
+        
+        // 1. Get REAL attendance data from attendance_summary table
+        $attendance_sql = "SELECT * FROM attendance_summary 
+                          WHERE student_id = '$student_id' 
+                          AND class_name = '$class_name'
+                          AND term = 'First Term' 
+                          AND academic_year = '2023-2024'";
+        $attendance_result = mysqli_query($conn, $attendance_sql);
+        
+        $attendance_data = [];
+        if ($attendance_result && mysqli_num_rows($attendance_result) > 0) {
+            $attendance_data = mysqli_fetch_assoc($attendance_result);
+        }
+        
+        // 2. Get REAL psychomotor data from psychomotor_assessments table
+        $psychomotor_sql = "SELECT * FROM psychomotor_assessments 
+                           WHERE student_id = '$student_id' 
+                           AND class_name = '$class_name'
+                           AND term = 'First Term' 
+                           AND academic_year = '2023-2024'";
+        $psychomotor_result = mysqli_query($conn, $psychomotor_sql);
+        
+        $psychomotor_data = [];
+        if ($psychomotor_result && mysqli_num_rows($psychomotor_result) > 0) {
+            $psychomotor_data = mysqli_fetch_assoc($psychomotor_result);
+        }
+        
+        // 3. Get REAL affective data from affective_assessments table
+        $affective_sql = "SELECT * FROM affective_assessments 
+                         WHERE student_id = '$student_id' 
+                         AND class_name = '$class_name'
+                         AND term = 'First Term' 
+                         AND academic_year = '2023-2024'";
+        $affective_result = mysqli_query($conn, $affective_sql);
+        
+        $affective_data = [];
+        if ($affective_result && mysqli_num_rows($affective_result) > 0) {
+            $affective_data = mysqli_fetch_assoc($affective_result);
+        }
+        
+        // Get existing remarks if any
+        $remarks_sql = "SELECT * FROM report_remarks WHERE student_id = '$student_id'";
+        $remarks_result = mysqli_query($conn, $remarks_sql);
+        $existing_remarks = [];
+        
+        if ($remarks_result && mysqli_num_rows($remarks_result) > 0) {
+            $existing_remarks = mysqli_fetch_assoc($remarks_result);
+        }
+        
+        // Calculate class position
+        $className = mysqli_real_escape_string($conn, $student_data['class_name']);
+        $rollNumber = mysqli_real_escape_string($conn, $student_data['roll_number']);
+        
+        // Get all students in the class ordered by percentage
+        $all_students_sql = "SELECT roll_number, percentage 
+                            FROM results 
+                            WHERE class = '$className' 
+                            ORDER BY percentage DESC";
+        $all_students_result = mysqli_query($conn, $all_students_sql);
+        
+        $position = 0;
+        $total_students = 0;
+        $current_rank = 0;
+        $last_percentage = null;
+        $class_position_found = false;
+        
+        if ($all_students_result) {
+            $total_students_in_class = mysqli_num_rows($all_students_result);
+            
+            while ($student = mysqli_fetch_assoc($all_students_result)) {
+                $current_rank++;
+                
+                // Handle ties - same percentage gets same rank
+                if ($last_percentage !== $student['percentage']) {
+                    $position = $current_rank;
+                }
+                
+                $last_percentage = $student['percentage'];
+                
+                // Check if this is our target student
+                if ($student['roll_number'] == $rollNumber) {
+                    $class_position = $position;
+                    $class_position_found = true;
+                    break;
+                }
+            }
+            
+            // If student not found in ranking (shouldn't happen), set default
+            if (!$class_position_found) {
+                $class_position = null;
+            }
+        }
+        
     } else {
         $error = "Student not found.";
     }
@@ -309,7 +331,7 @@ function calculateOverallPerformance($results, $subject_marks) {
     $subjects_with_marks = 0;
     $subject_grades = [];
     
-    // Use subject_marks data if available, otherwise fall back to results table
+    // PRIORITIZE subject_marks data (where teachers upload)
     if (!empty($subject_marks)) {
         foreach ($subject_marks as $subject_name => $marks_data) {
             $marks = $marks_data['total_marks'];
@@ -404,7 +426,7 @@ if (!empty($student_data) && !empty($student_results)) {
         .subject-row:hover {
             background: #f7fafc;
         }
-        .grade-A\+ { background-color: #10B981; color: white; }
+        .grade-A1 { background-color: #10B981; color: white; }
         .grade-A { background-color: #34D399; color: white; }
         .grade-B { background-color: #60A5FA; color: white; }
         .grade-C { background-color: #FBBF24; color: white; }
@@ -483,6 +505,15 @@ if (!empty($student_data) && !empty($student_results)) {
             transform: scale(1.2);
             cursor: pointer;
         }
+        .real-data-badge {
+            background: linear-gradient(135deg, #10B981, #34D399);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            margin-left: 8px;
+        }
         @media print {
             body {
                 background: white !important;
@@ -540,7 +571,7 @@ if (!empty($student_data) && !empty($student_results)) {
         <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4 no-print">
             <div>
                 <h1 class="text-xl sm:text-2xl font-bold text-white">Student Report Card</h1>
-                <p class="text-white/80 text-sm">View academic performance</p>
+                <p class="text-white/80 text-sm">Real-time Academic Performance Report</p>
             </div>
             <div class="flex items-center space-x-2">
                 <?php if (isset($_SESSION['user_id']) || isset($_SESSION['teacher_id'])): ?>
@@ -696,26 +727,39 @@ if (!empty($student_data) && !empty($student_results)) {
                     </div>
                 </div>
 
-                <!-- 1. ATTENDANCE RECORD -->
+                <!-- 1. ATTENDANCE RECORD - REAL DATA -->
                 <div class="p-4 bg-gradient-to-r from-green-50 to-emerald-50 border-b">
                     <h3 class="text-lg font-bold text-gray-800 mb-4 flex items-center justify-center">
                         <i class="fas fa-calendar-check text-green-500 mr-2"></i>
                         1. ATTENDANCE RECORD
+                        <span class="real-data-badge">LIVE DATA</span>
                     </h3>
                     <div class="performance-grid">
                         <div class="performance-item p-4 bg-white rounded-lg shadow-sm">
-                            <div class="text-2xl font-bold text-blue-600 mb-2"><?php echo rand(85, 95); ?>%</div>
+                            <div class="text-2xl font-bold text-blue-600 mb-2">
+                                <?php echo isset($attendance_data['attendance_rate']) ? number_format($attendance_data['attendance_rate'], 1) : '0.0'; ?>%
+                            </div>
                             <div class="text-sm text-gray-600 font-medium">Attendance Rate</div>
                         </div>
                         <div class="performance-item p-4 bg-white rounded-lg shadow-sm">
-                            <div class="text-2xl font-bold text-green-600 mb-2"><?php echo rand(85, 95); ?></div>
+                            <div class="text-2xl font-bold text-green-600 mb-2">
+                                <?php echo isset($attendance_data['days_present']) ? $attendance_data['days_present'] : '0'; ?>
+                            </div>
                             <div class="text-sm text-gray-600 font-medium">Days Present</div>
                         </div>
                         <div class="performance-item p-4 bg-white rounded-lg shadow-sm">
-                            <div class="text-2xl font-bold text-red-600 mb-2"><?php echo rand(2, 8); ?></div>
+                            <div class="text-2xl font-bold text-red-600 mb-2">
+                                <?php echo isset($attendance_data['days_absent']) ? $attendance_data['days_absent'] : '0'; ?>
+                            </div>
                             <div class="text-sm text-gray-600 font-medium">Days Absent</div>
                         </div>
                     </div>
+                    <?php if (isset($attendance_data['last_updated'])): ?>
+                        <div class="text-center mt-3 text-xs text-gray-600">
+                            <i class="fas fa-sync-alt mr-1"></i>
+                            Last updated: <?php echo date('M j, Y g:i A', strtotime($attendance_data['last_updated'])); ?>
+                        </div>
+                    <?php endif; ?>
                 </div>
 
                 <!-- 2. COGNITIVE DOMAIN -->
@@ -773,7 +817,7 @@ if (!empty($student_data) && !empty($student_results)) {
                                         <span class="text-xs text-gray-600">
                                             <?php
                                             $remarks = [
-                                                'A+' => 'Excellent',
+                                                'A1' => 'Excellent',
                                                 'A' => 'Very Good',
                                                 'B' => 'Good',
                                                 'C' => 'Credit',
@@ -797,11 +841,12 @@ if (!empty($student_data) && !empty($student_results)) {
                 <form method="POST" action="?student_id=<?php echo $student_id; ?>">
                 <?php endif; ?>
 
-                <!-- 3. PSYCHOMOTOR DOMAIN -->
+                <!-- 3. PSYCHOMOTOR DOMAIN - REAL DATA -->
                 <div class="p-4 bg-gradient-to-r from-green-50 to-emerald-50 border-b">
                     <h3 class="text-lg font-bold text-gray-800 mb-4 flex items-center justify-center">
                         <i class="fas fa-running text-green-500 mr-2"></i>
                         3. PSYCHOMOTOR DOMAIN
+                        <span class="real-data-badge">LIVE DATA</span>
                     </h3>
                     
                     <!-- Psychomotor Skills Table -->
@@ -815,21 +860,22 @@ if (!empty($student_data) && !empty($student_results)) {
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach($psychomotor_skills as $skill => $description): 
-                                $skill_key = sanitizeKey($skill);
-                                $current_rating = isset($existing_psychomotor[$skill]) ? $existing_psychomotor[$skill] : 3;
+                            <?php foreach($psychomotor_skills_db as $db_field => $skill_info): 
+                                $current_rating = isset($psychomotor_data[$db_field]) ? $psychomotor_data[$db_field] : 
+                                                (isset($existing_remarks['psychomotor_data']) ? 
+                                                 json_decode($existing_remarks['psychomotor_data'], true)[$db_field] ?? 3 : 3);
                             ?>
                             <tr>
                                 <td class="skill-name">
-                                    <div class="font-medium text-gray-800"><?php echo $skill; ?></div>
-                                    <div class="text-xs text-gray-600"><?php echo $description; ?></div>
+                                    <div class="font-medium text-gray-800"><?php echo $skill_info['name']; ?></div>
+                                    <div class="text-xs text-gray-600"><?php echo $skill_info['description']; ?></div>
                                 </td>
                                 <?php for($i = 5; $i >= 1; $i--): ?>
                                 <td class="rating-cell">
                                     <?php if ($can_edit_domains): ?>
                                         <input type="radio" 
-                                               id="psychomotor_<?php echo $skill_key; ?>_<?php echo $i; ?>" 
-                                               name="psychomotor_<?php echo $skill_key; ?>" 
+                                               id="<?php echo $db_field; ?>_<?php echo $i; ?>" 
+                                               name="<?php echo $db_field; ?>" 
                                                value="<?php echo $i; ?>"
                                                <?php echo $current_rating == $i ? 'checked' : ''; ?>
                                                class="text-green-600 focus:ring-green-500">
@@ -859,36 +905,44 @@ if (!empty($student_data) && !empty($student_results)) {
                             <?php endforeach; ?>
                         </div>
                     </div>
+                    <?php if (isset($psychomotor_data['assessed_at'])): ?>
+                        <div class="text-center mt-3 text-xs text-gray-600">
+                            <i class="fas fa-sync-alt mr-1"></i>
+                            Last assessed: <?php echo date('M j, Y g:i A', strtotime($psychomotor_data['assessed_at'])); ?>
+                        </div>
+                    <?php endif; ?>
                 </div>
 
-                <!-- 4. AFFECTIVE DOMAIN -->
+                <!-- 4. AFFECTIVE DOMAIN - REAL DATA -->
                 <div class="p-4 bg-gradient-to-r from-purple-50 to-pink-50 border-b">
                     <h3 class="text-lg font-bold text-gray-800 mb-4 flex items-center justify-center">
                         <i class="fas fa-heart text-red-500 mr-2"></i>
                         4. AFFECTIVE DOMAIN
+                        <span class="real-data-badge">LIVE DATA</span>
                     </h3>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <?php foreach($affective_traits as $trait => $description): 
-                            $trait_key = sanitizeKey($trait);
-                            $current_rating = isset($existing_affective[$trait]) ? $existing_affective[$trait] : 3;
+                        <?php foreach($affective_traits_db as $db_field => $trait_info): 
+                            $current_rating = isset($affective_data[$db_field]) ? $affective_data[$db_field] : 
+                                            (isset($existing_remarks['affective_data']) ? 
+                                             json_decode($existing_remarks['affective_data'], true)[$db_field] ?? 3 : 3);
                         ?>
                         <div class="p-3 bg-white rounded-lg shadow-sm">
                             <div class="mb-2">
-                                <div class="font-medium text-gray-800 text-sm"><?php echo $trait; ?></div>
-                                <div class="text-xs text-gray-600"><?php echo $description; ?></div>
+                                <div class="font-medium text-gray-800 text-sm"><?php echo $trait_info['name']; ?></div>
+                                <div class="text-xs text-gray-600"><?php echo $trait_info['description']; ?></div>
                             </div>
                             <div class="rating-options">
                                 <?php for($i = 1; $i <= 5; $i++): ?>
                                 <div class="rating-option">
                                     <?php if ($can_edit_domains): ?>
                                         <input type="radio" 
-                                               id="affective_<?php echo $trait_key; ?>_<?php echo $i; ?>" 
-                                               name="affective_<?php echo $trait_key; ?>" 
+                                               id="<?php echo $db_field; ?>_<?php echo $i; ?>" 
+                                               name="<?php echo $db_field; ?>" 
                                                value="<?php echo $i; ?>"
                                                <?php echo $current_rating == $i ? 'checked' : ''; ?>
                                                class="text-purple-600 focus:ring-purple-500">
                                     <?php endif; ?>
-                                    <label for="affective_<?php echo $trait_key; ?>_<?php echo $i; ?>" 
+                                    <label for="<?php echo $db_field; ?>_<?php echo $i; ?>" 
                                            class="text-xs <?php echo $current_rating == $i ? 'font-semibold text-purple-600' : 'text-gray-600'; ?>">
                                         <?php if (!$can_edit_domains && $current_rating == $i): ?>
                                             <span class="rating-<?php echo $i; ?> px-2 py-1 rounded-full"><?php echo $i; ?></span>
@@ -906,6 +960,12 @@ if (!empty($student_data) && !empty($student_results)) {
                         <i class="fas fa-info-circle mr-1"></i>
                         Rating Scale: 1 (Poor) to 5 (Excellent)
                     </div>
+                    <?php if (isset($affective_data['assessed_at'])): ?>
+                        <div class="text-center mt-3 text-xs text-gray-600">
+                            <i class="fas fa-sync-alt mr-1"></i>
+                            Last assessed: <?php echo date('M j, Y g:i A', strtotime($affective_data['assessed_at'])); ?>
+                        </div>
+                    <?php endif; ?>
                 </div>
 
                 <!-- Remarks Section -->
@@ -981,6 +1041,18 @@ if (!empty($student_data) && !empty($student_results)) {
                         </div>
                     </div>
                 </div>
+            </div>
+
+            <!-- Real-time Data Notice -->
+            <div class="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-4 text-center no-print">
+                <div class="flex items-center justify-center space-x-2 text-blue-700">
+                    <i class="fas fa-sync-alt animate-spin"></i>
+                    <span class="font-semibold">Real-time Data Integration Active</span>
+                </div>
+                <p class="text-blue-600 text-sm mt-1">
+                    This report card automatically updates with data from class teacher inputs. 
+                    Changes are reflected immediately when teachers submit attendance and assessments.
+                </p>
             </div>
         <?php endif; ?>
     </div>
